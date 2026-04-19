@@ -36,7 +36,6 @@ function migrate(d: Database.Database): void {
       transcript_downloaded_at INTEGER,
       webhook_audio_fired_at INTEGER,
       webhook_transcript_fired_at INTEGER,
-      is_historical INTEGER NOT NULL DEFAULT 0,
       last_error TEXT,
       metadata_json TEXT
     );
@@ -68,6 +67,39 @@ function migrate(d: Database.Database): void {
     d.exec("ALTER TABLE recordings ADD COLUMN transcript_text TEXT");
   } catch {
     // column already exists — ignore
+  }
+
+  // v4: add summary_downloaded_at column. The dashboard previously used
+  // `summary_path` as a "has summary" signal, but that field is set
+  // speculatively at insert time — so it lit up the pill even for recordings
+  // where Plaud never produced a summary. This timestamp is only set when
+  // summary.md is actually written.
+  try {
+    d.exec("ALTER TABLE recordings ADD COLUMN summary_downloaded_at INTEGER");
+  } catch {
+    // column already exists — ignore
+  }
+
+  // Backfill summary_downloaded_at for existing rows: if the summary.md file
+  // is on disk, use transcript_downloaded_at as the timestamp (best proxy we
+  // have since the two were written together).
+  const summaryBackfill = d
+    .prepare(
+      "SELECT id, summary_path, transcript_downloaded_at FROM recordings WHERE transcript_downloaded_at IS NOT NULL AND summary_downloaded_at IS NULL",
+    )
+    .all() as { id: string; summary_path: string | null; transcript_downloaded_at: number }[];
+  if (summaryBackfill.length > 0) {
+    const update = d.prepare("UPDATE recordings SET summary_downloaded_at = ? WHERE id = ?");
+    for (const row of summaryBackfill) {
+      if (!row.summary_path) continue;
+      try {
+        if (existsSync(row.summary_path)) {
+          update.run(row.transcript_downloaded_at, row.id);
+        }
+      } catch {
+        /* best effort */
+      }
+    }
   }
 
   // Backfill transcript_text from existing transcript.txt files on disk
@@ -105,17 +137,16 @@ interface RecordingDbRow {
   metadata_path: string | null;
   audio_downloaded_at: number | null;
   transcript_downloaded_at: number | null;
+  summary_downloaded_at: number | null;
   webhook_audio_fired_at: number | null;
   webhook_transcript_fired_at: number | null;
   is_trash: number;
-  is_historical: number;
   last_error: string | null;
   metadata_json: string | null;
   transcript_text: string | null;
 }
 
 function statusOf(row: RecordingDbRow): RecordingStatus {
-  if (row.is_historical && !row.audio_downloaded_at) return "historical";
   if (!row.audio_downloaded_at) return "pending_audio";
   if (row.last_error) return "error";
   if (!row.transcript_downloaded_at) return "pending_transcript";
@@ -138,10 +169,10 @@ export function rowToRecording(row: RecordingDbRow): RecordingRow {
     metadataPath: row.metadata_path,
     audioDownloadedAt: row.audio_downloaded_at,
     transcriptDownloadedAt: row.transcript_downloaded_at,
+    summaryDownloadedAt: row.summary_downloaded_at,
     webhookAudioFiredAt: row.webhook_audio_fired_at,
     webhookTranscriptFiredAt: row.webhook_transcript_fired_at,
     isTrash: row.is_trash === 1,
-    isHistorical: row.is_historical === 1,
     lastError: row.last_error,
     status: statusOf(row),
   };

@@ -15,15 +15,16 @@ import {
   upsertFromPlaud,
   markAudioDownloaded,
   markTranscriptDownloaded,
+  markSummaryDownloaded,
   markWebhookFired,
   recordError,
   getRecordingById,
-  findPendingTranscriptIds,
+  findRecordingsNeedingAssets,
 } from "./state.js";
 import { ensureRecordingFolder } from "./layout.js";
 import { fireWebhookForRecording } from "../webhook/post.js";
 import { emit } from "./events.js";
-import type { PlaudRawRecording } from "@applaud/shared";
+import type { RecordingRow } from "@applaud/shared";
 
 export interface PollerStatus {
   lastPollAt: number | null;
@@ -117,13 +118,12 @@ class Poller {
     if (!cfg.token || !cfg.recordingsDir || !cfg.setupComplete) return;
     this.authRequired = false;
 
-    // Paginate through ALL recordings. We stop when the API returns a short
-    // page (< limit items) or when we've walked a sensible safety cap. Walking
-    // the full history on each poll is cheap: ingestOne is a no-op for rows we
-    // already have, so only new recordings trigger downloads.
+    // Phase 1 — Discovery: walk Plaud's recording list and upsert metadata for
+    // any new rows. Upsert is a no-op for rows we already have. No fetching
+    // happens here.
     const PAGE_SIZE = 50;
     const MAX_PAGES = 200;
-    const seen: PlaudRawRecording[] = [];
+    let fetched = 0;
     let totalReported = 0;
     for (let pageIdx = 0; pageIdx < MAX_PAGES; pageIdx++) {
       const page = await listRecordings({
@@ -136,113 +136,132 @@ class Poller {
       totalReported = page.data_file_total ?? totalReported;
       const items = page.data_file_list ?? [];
       if (items.length === 0) break;
-      seen.push(...items);
+      for (const item of items) {
+        try {
+          upsertFromPlaud(item);
+          fetched++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn({ err, id: item.id }, "upsert failed");
+          recordError(item.id, msg);
+          emit("error", { recordingId: item.id, message: msg });
+        }
+      }
       if (items.length < PAGE_SIZE) break;
     }
-    logger.info(
-      { fetched: seen.length, reportedTotal: totalReported },
-      "list walk complete",
-    );
-    for (const item of seen) {
-      await this.ingestOne(item).catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn({ err, id: item.id }, "ingest failed");
-        recordError(item.id, msg);
-        emit("error", { recordingId: item.id, message: msg });
-      });
-    }
+    logger.info({ fetched, reportedTotal: totalReported }, "list walk complete");
 
-    // Retry transcripts that were pending from previous polls.
-    const pending = findPendingTranscriptIds();
-    for (const id of pending) {
-      if (seen.some((s) => s.id === id)) continue; // already handled above
-      await this.tryTranscript(id).catch((err) => {
+    // Phase 2 — Fetch: for every recording with any missing asset, try to
+    // fetch the missing ones. Each asset is independent; each gets retried on
+    // every poll until it's downloaded.
+    const needy = findRecordingsNeedingAssets();
+    for (const row of needy) {
+      await this.processRecording(row).catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
-        recordError(id, msg);
+        logger.warn({ err, id: row.id }, "processRecording failed");
+        recordError(row.id, msg);
+        emit("error", { recordingId: row.id, message: msg });
       });
     }
   }
 
-  private async ingestOne(item: PlaudRawRecording): Promise<void> {
+  private async processRecording(row: RecordingRow): Promise<void> {
     const cfg = loadConfig();
     if (!cfg.recordingsDir) return;
-
-    const row = upsertFromPlaud(item);
-    if (!row.audioDownloadedAt) {
-      const paths = ensureRecordingFolder(cfg.recordingsDir, row.folder);
-
-      try {
-        const detail = await getFileDetail(item.id);
-        writeFileSync(paths.metadataPath, JSON.stringify(detail, null, 2));
-      } catch (err) {
-        logger.warn({ err, id: item.id }, "file detail fetch failed (non-fatal)");
-      }
-
-      const bytes = await downloadAudio(item.id, paths.audioPath);
-      markAudioDownloaded(item.id, bytes || item.filesize);
-      emit("recording_new", { recordingId: item.id });
-
-      const fresh = getRecordingById(item.id);
-      if (fresh) {
-        const fired = await fireWebhookForRecording("audio_ready", fresh);
-        if (fired) markWebhookFired(item.id, "audio_ready");
-      }
-    }
-
-    // If the transcript is ready on Plaud's side and we haven't pulled it yet, pull it.
-    if (item.is_trans) {
-      const current = getRecordingById(item.id);
-      if (current && !current.transcriptDownloadedAt) {
-        await this.tryTranscript(item.id);
-      }
-    }
-  }
-
-  private async tryTranscript(id: string): Promise<void> {
-    const cfg = loadConfig();
-    if (!cfg.recordingsDir) return;
-    const row = getRecordingById(id);
-    if (!row) return;
     const paths = ensureRecordingFolder(cfg.recordingsDir, row.folder);
 
-    // Try the transsumm endpoint first (works for newer recordings).
-    const resp = await getTranscriptAndSummary(id);
-    if (resp.data_result && resp.data_result.length > 0) {
+    if (!row.audioDownloadedAt) {
+      try {
+        const detail = await getFileDetail(row.id);
+        writeFileSync(paths.metadataPath, JSON.stringify(detail, null, 2));
+      } catch (err) {
+        logger.warn({ err, id: row.id }, "file detail fetch failed (non-fatal)");
+      }
+
+      const bytes = await downloadAudio(row.id, paths.audioPath);
+      markAudioDownloaded(row.id, bytes || row.filesizeBytes);
+      emit("recording_new", { recordingId: row.id });
+
+      const fresh = getRecordingById(row.id);
+      if (fresh) {
+        const fired = await fireWebhookForRecording("audio_ready", fresh);
+        if (fired) markWebhookFired(row.id, "audio_ready");
+      }
+    }
+
+    if (!row.transcriptDownloadedAt || !row.summaryDownloadedAt) {
+      await this.tryTranscriptAndSummary(row);
+    }
+  }
+
+  private async tryTranscriptAndSummary(row: RecordingRow): Promise<void> {
+    const cfg = loadConfig();
+    if (!cfg.recordingsDir) return;
+    const paths = ensureRecordingFolder(cfg.recordingsDir, row.folder);
+
+    const needTranscript = !row.transcriptDownloadedAt;
+    const needSummary = !row.summaryDownloadedAt;
+    let wroteTranscript = false;
+    let wroteSummary = false;
+
+    // Primary: transsumm endpoint. Returns transcript + summary together for
+    // newer recordings. Shape of data_result_summ varies per recording — the
+    // extractor handles that.
+    const resp = await getTranscriptAndSummary(row.id);
+    if (needTranscript && resp.data_result && resp.data_result.length > 0) {
       writeFileSync(paths.transcriptJsonPath, JSON.stringify(resp, null, 2));
       const txtContent = flattenTranscript(resp.data_result);
       writeFileSync(paths.transcriptTxtPath, txtContent);
+      markTranscriptDownloaded(row.id, txtContent);
+      wroteTranscript = true;
+    }
+    if (needSummary) {
       const md = extractSummaryMarkdown(resp);
-      if (md) writeFileSync(paths.summaryMdPath, md);
-      markTranscriptDownloaded(id, txtContent);
-      emit("recording_downloaded", { recordingId: id });
-
-      const fresh = getRecordingById(id);
-      if (fresh) {
-        const fired = await fireWebhookForRecording("transcript_ready", fresh);
-        if (fired) markWebhookFired(id, "transcript_ready");
+      if (md) {
+        writeFileSync(paths.summaryMdPath, md);
+        markSummaryDownloaded(row.id);
+        wroteSummary = true;
       }
-      return;
     }
 
-    // Fallback: older recordings store transcripts in S3 via the file detail endpoint.
-    logger.info({ id }, "transsumm returned no data, trying file detail fallback");
-    const detail = await getFileDetail(id);
-    if (!detail.content_list || detail.content_list.length === 0) return;
+    // Fallback: pre-March-2026 recordings where transsumm returns status:-12
+    // with empty data_result. Transcript + summary live as S3 artifacts in
+    // /file/detail content_list, tagged by data_type "transaction" and
+    // "auto_sum_note" respectively.
+    const stillNeedTranscript = needTranscript && !wroteTranscript;
+    const stillNeedSummary = needSummary && !wroteSummary;
+    if (stillNeedTranscript || stillNeedSummary) {
+      logger.info(
+        { id: row.id, stillNeedTranscript, stillNeedSummary },
+        "trying content_list fallback",
+      );
+      const detail = await getFileDetail(row.id);
+      if (detail.content_list && detail.content_list.length > 0) {
+        const { segments, summaryMd } = await fetchTranscriptFromContentList(detail.content_list);
+        if (stillNeedTranscript && segments.length > 0) {
+          writeFileSync(paths.transcriptJsonPath, JSON.stringify(segments, null, 2));
+          const txtContent = flattenTranscript(segments);
+          writeFileSync(paths.transcriptTxtPath, txtContent);
+          markTranscriptDownloaded(row.id, txtContent);
+          wroteTranscript = true;
+        }
+        if (stillNeedSummary && summaryMd) {
+          writeFileSync(paths.summaryMdPath, summaryMd);
+          markSummaryDownloaded(row.id);
+          wroteSummary = true;
+        }
+      }
+    }
 
-    const { segments, summaryMd } = await fetchTranscriptFromContentList(detail.content_list);
-    if (segments.length === 0) return;
-
-    writeFileSync(paths.transcriptJsonPath, JSON.stringify(segments, null, 2));
-    const txtContent = flattenTranscript(segments);
-    writeFileSync(paths.transcriptTxtPath, txtContent);
-    if (summaryMd) writeFileSync(paths.summaryMdPath, summaryMd);
-    markTranscriptDownloaded(id, txtContent);
-    emit("recording_downloaded", { recordingId: id });
-
-    const fresh = getRecordingById(id);
-    if (fresh) {
-      const fired = await fireWebhookForRecording("transcript_ready", fresh);
-      if (fired) markWebhookFired(id, "transcript_ready");
+    // transcript_ready fires only on a null→set transition; summary-only
+    // backfills don't refire the webhook.
+    if (wroteTranscript) {
+      emit("recording_downloaded", { recordingId: row.id });
+      const fresh = getRecordingById(row.id);
+      if (fresh) {
+        const fired = await fireWebhookForRecording("transcript_ready", fresh);
+        if (fired) markWebhookFired(row.id, "transcript_ready");
+      }
     }
   }
 }

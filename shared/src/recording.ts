@@ -36,8 +36,7 @@ export type RecordingStatus =
   | "audio_only"
   | "pending_transcript"
   | "complete"
-  | "error"
-  | "historical";
+  | "error";
 
 export interface RecordingRow {
   id: string;
@@ -54,10 +53,10 @@ export interface RecordingRow {
   metadataPath: string | null;
   audioDownloadedAt: number | null;
   transcriptDownloadedAt: number | null;
+  summaryDownloadedAt: number | null;
   webhookAudioFiredAt: number | null;
   webhookTranscriptFiredAt: number | null;
   isTrash: boolean;
-  isHistorical: boolean;
   lastError: string | null;
   status: RecordingStatus;
 }

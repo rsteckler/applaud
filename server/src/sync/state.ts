@@ -7,11 +7,7 @@ import { loadConfig } from "../config.js";
 import { logger } from "../logger.js";
 import { emit } from "./events.js";
 
-export interface UpsertOptions {
-  isHistorical?: boolean;
-}
-
-export function upsertFromPlaud(item: PlaudRawRecording, opts: UpsertOptions = {}): RecordingRow {
+export function upsertFromPlaud(item: PlaudRawRecording): RecordingRow {
   const db = getDb();
   const existing = db
     .prepare<[string], RecordingDbRow>("SELECT * FROM recordings WHERE id = ?")
@@ -39,8 +35,8 @@ export function upsertFromPlaud(item: PlaudRawRecording, opts: UpsertOptions = {
       id, filename, start_time, end_time, duration_ms, filesize_bytes, serial_number,
       folder, audio_path, transcript_path, summary_path, metadata_path,
       audio_downloaded_at, transcript_downloaded_at, webhook_audio_fired_at,
-      webhook_transcript_fired_at, is_trash, is_historical, last_error, metadata_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL)`,
+      webhook_transcript_fired_at, is_trash, last_error, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, NULL, NULL)`,
   ).run(
     item.id,
     item.filename,
@@ -55,7 +51,6 @@ export function upsertFromPlaud(item: PlaudRawRecording, opts: UpsertOptions = {
     paths.summaryMdPath,
     paths.metadataPath,
     item.is_trash ? 1 : 0,
-    opts.isHistorical ? 1 : 0,
   );
 
   return rowToRecording(
@@ -121,6 +116,12 @@ export function markTranscriptDownloaded(id: string, transcriptText?: string): v
     .run(now, transcriptText ?? null, id);
 }
 
+export function markSummaryDownloaded(id: string): void {
+  getDb()
+    .prepare("UPDATE recordings SET summary_downloaded_at = ? WHERE id = ?")
+    .run(Date.now(), id);
+}
+
 export function markWebhookFired(id: string, event: "audio_ready" | "transcript_ready"): void {
   const col = event === "audio_ready" ? "webhook_audio_fired_at" : "webhook_transcript_fired_at";
   getDb().prepare(`UPDATE recordings SET ${col} = ? WHERE id = ?`).run(Date.now(), id);
@@ -184,10 +185,13 @@ export function deleteRecording(id: string): void {
   getDb().prepare("DELETE FROM recordings WHERE id = ?").run(id);
 }
 
-export function countPendingTranscripts(): number {
+export function countPendingAssets(): number {
   const row = getDb()
     .prepare<[], { c: number }>(
-      "SELECT COUNT(*) AS c FROM recordings WHERE audio_downloaded_at IS NOT NULL AND transcript_downloaded_at IS NULL",
+      `SELECT COUNT(*) AS c FROM recordings
+       WHERE audio_downloaded_at IS NULL
+          OR transcript_downloaded_at IS NULL
+          OR summary_downloaded_at IS NULL`,
     )
     .get();
   return row?.c ?? 0;
@@ -203,11 +207,15 @@ export function countErrorsLast24h(): number {
   return row?.c ?? 0;
 }
 
-export function findPendingTranscriptIds(): string[] {
+export function findRecordingsNeedingAssets(): RecordingRow[] {
   const rows = getDb()
-    .prepare<[], { id: string }>(
-      "SELECT id FROM recordings WHERE audio_downloaded_at IS NOT NULL AND transcript_downloaded_at IS NULL AND is_historical = 0",
+    .prepare<[], RecordingDbRow>(
+      `SELECT * FROM recordings
+       WHERE audio_downloaded_at IS NULL
+          OR transcript_downloaded_at IS NULL
+          OR summary_downloaded_at IS NULL
+       ORDER BY start_time DESC`,
     )
     .all();
-  return rows.map((r) => r.id);
+  return rows.map(rowToRecording);
 }

@@ -33,7 +33,7 @@ function formatBytes(bytes: number): string {
 function StatusDots({ row }: { row: RecordingRow }): JSX.Element {
   const hasAudio = !!row.audioDownloadedAt;
   const hasTranscript = !!row.transcriptDownloadedAt;
-  const hasSummary = !!row.summaryPath && hasTranscript;
+  const hasSummary = !!row.summaryDownloadedAt;
   return (
     <div className="flex items-center gap-2 text-[10px] font-label font-bold uppercase tracking-widest">
       <StatusPill on={hasAudio} label="audio" color="secondary" />

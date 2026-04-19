@@ -115,12 +115,13 @@ export async function fetchTranscriptFromContentList(
     const res = await fetch(summItem.data_link);
     if (res.ok) {
       const buf = Buffer.from(await res.arrayBuffer());
+      let raw: string;
       try {
-        summaryMd = gunzipSync(buf).toString("utf8");
+        raw = gunzipSync(buf).toString("utf8");
       } catch {
-        summaryMd = buf.toString("utf8");
+        raw = buf.toString("utf8");
       }
-      if (summaryMd && summaryMd.trim().length === 0) summaryMd = null;
+      summaryMd = extractMarkdownFromSummaryPayload(raw);
     }
   }
 
@@ -129,27 +130,51 @@ export async function fetchTranscriptFromContentList(
 
 export function extractSummaryMarkdown(resp: TranssummResponse): string | null {
   const raw = resp.data_result_summ;
-  if (!raw) return null;
+  if (raw === null || raw === undefined) return null;
+  return extractMarkdownFromSummaryPayload(raw);
+}
 
-  // Plaud returns this field as either a structured object OR a JSON-encoded string.
-  let obj: SummaryContent | null = null;
-  if (typeof raw === "string") {
-    try {
-      obj = JSON.parse(raw) as SummaryContent;
-    } catch {
-      // Not JSON — fall back to treating the raw string as markdown itself.
-      return raw.trim().length > 0 ? raw : null;
+// Plaud returns summary payloads in several shapes across its endpoints and
+// across recordings of different ages. Known shapes:
+//   - Raw markdown string
+//   - JSON object / JSON-encoded string with one of:
+//       { markdown: "..." }                    (top-level markdown)
+//       { ai_content: "...", header, ... }    (S3 auto_sum_note blobs)
+//       { content: "..." }                     (legacy string form)
+//       { content: { markdown: "..." } }       (legacy nested form)
+// Returns the markdown string, or null if nothing usable was found.
+function extractMarkdownFromSummaryPayload(input: unknown): string | null {
+  let obj: unknown = input;
+  if (typeof obj === "string") {
+    const s = obj.trim();
+    if (s.length === 0) return null;
+    // Try to parse as JSON; if it fails the raw string IS the markdown.
+    if (s.startsWith("{") || s.startsWith("[")) {
+      try {
+        obj = JSON.parse(s);
+      } catch {
+        return s;
+      }
+    } else {
+      return s;
     }
-  } else {
-    obj = raw;
   }
 
-  const content = obj?.content;
+  if (!obj || typeof obj !== "object") return null;
+  const rec = obj as Record<string, unknown>;
+
+  const aiContent = rec.ai_content;
+  if (typeof aiContent === "string" && aiContent.trim().length > 0) return aiContent;
+
+  const topMd = rec.markdown;
+  if (typeof topMd === "string" && topMd.trim().length > 0) return topMd;
+
+  const content = rec.content;
   if (typeof content === "string") {
     return content.trim().length > 0 ? content : null;
   }
   if (content && typeof content === "object") {
-    const md = (content as { markdown?: unknown }).markdown;
+    const md = (content as Record<string, unknown>).markdown;
     if (typeof md === "string" && md.trim().length > 0) return md;
   }
   return null;
