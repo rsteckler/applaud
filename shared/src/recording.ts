@@ -31,13 +31,6 @@ export interface PlaudListResponse {
   data_file_list: PlaudRawRecording[];
 }
 
-export type RecordingStatus =
-  | "pending_audio"
-  | "audio_only"
-  | "pending_transcript"
-  | "complete"
-  | "error";
-
 export interface RecordingRow {
   id: string;
   filename: string;
@@ -58,7 +51,6 @@ export interface RecordingRow {
   webhookTranscriptFiredAt: number | null;
   isTrash: boolean;
   lastError: string | null;
-  status: RecordingStatus;
 }
 
 export interface RecordingDetail extends RecordingRow {

@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { ensureConfigDir, dbPath } from "./paths.js";
-import type { RecordingRow, RecordingStatus } from "@applaud/shared";
+import type { RecordingRow } from "@applaud/shared";
 
 let db: Database.Database | null = null;
 
@@ -146,13 +146,6 @@ interface RecordingDbRow {
   transcript_text: string | null;
 }
 
-function statusOf(row: RecordingDbRow): RecordingStatus {
-  if (!row.audio_downloaded_at) return "pending_audio";
-  if (row.last_error) return "error";
-  if (!row.transcript_downloaded_at) return "pending_transcript";
-  return "complete";
-}
-
 export function rowToRecording(row: RecordingDbRow): RecordingRow {
   return {
     id: row.id,
@@ -174,7 +167,6 @@ export function rowToRecording(row: RecordingDbRow): RecordingRow {
     webhookTranscriptFiredAt: row.webhook_transcript_fired_at,
     isTrash: row.is_trash === 1,
     lastError: row.last_error,
-    status: statusOf(row),
   };
 }
 

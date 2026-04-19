@@ -170,27 +170,43 @@ class Poller {
     if (!cfg.recordingsDir) return;
     const paths = ensureRecordingFolder(cfg.recordingsDir, row.folder);
 
+    // Each asset is retried independently — a failure fetching one doesn't
+    // block the others. Errors are recorded on the row and the loop continues.
     if (!row.audioDownloadedAt) {
       try {
-        const detail = await getFileDetail(row.id);
-        writeFileSync(paths.metadataPath, JSON.stringify(detail, null, 2));
+        try {
+          const detail = await getFileDetail(row.id);
+          writeFileSync(paths.metadataPath, JSON.stringify(detail, null, 2));
+        } catch (err) {
+          logger.warn({ err, id: row.id }, "file detail fetch failed (non-fatal)");
+        }
+
+        const bytes = await downloadAudio(row.id, paths.audioPath);
+        markAudioDownloaded(row.id, bytes || row.filesizeBytes);
+        emit("recording_new", { recordingId: row.id });
+
+        const fresh = getRecordingById(row.id);
+        if (fresh) {
+          const fired = await fireWebhookForRecording("audio_ready", fresh);
+          if (fired) markWebhookFired(row.id, "audio_ready");
+        }
       } catch (err) {
-        logger.warn({ err, id: row.id }, "file detail fetch failed (non-fatal)");
-      }
-
-      const bytes = await downloadAudio(row.id, paths.audioPath);
-      markAudioDownloaded(row.id, bytes || row.filesizeBytes);
-      emit("recording_new", { recordingId: row.id });
-
-      const fresh = getRecordingById(row.id);
-      if (fresh) {
-        const fired = await fireWebhookForRecording("audio_ready", fresh);
-        if (fired) markWebhookFired(row.id, "audio_ready");
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn({ err, id: row.id }, "audio download failed");
+        recordError(row.id, msg);
+        emit("error", { recordingId: row.id, message: msg });
       }
     }
 
     if (!row.transcriptDownloadedAt || !row.summaryDownloadedAt) {
-      await this.tryTranscriptAndSummary(row);
+      try {
+        await this.tryTranscriptAndSummary(row);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn({ err, id: row.id }, "transcript/summary fetch failed");
+        recordError(row.id, msg);
+        emit("error", { recordingId: row.id, message: msg });
+      }
     }
   }
 
