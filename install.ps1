@@ -14,7 +14,7 @@
 $ErrorActionPreference = 'Stop'
 
 $RepoUrl    = if ($env:APPLAUD_REPO) { $env:APPLAUD_REPO } else { 'https://github.com/rsteckler/applaud.git' }
-$RepoRef    = if ($env:APPLAUD_REF)  { $env:APPLAUD_REF }  else { 'v0.5.5' }
+$RepoRef    = if ($env:APPLAUD_REF)  { $env:APPLAUD_REF }  else { 'v0.5.8' }
 $InstallDir = if ($env:APPLAUD_DIR)  { $env:APPLAUD_DIR }  else { Join-Path $PWD 'applaud' }
 $MinNodeMajor = 20
 
