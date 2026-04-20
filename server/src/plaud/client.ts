@@ -4,6 +4,7 @@ import { loadConfig, updateConfig } from "../config.js";
 const REGION_API_BASES: Record<string, string> = {
   "aws:us-west-2": "https://api.plaud.ai",
   "aws:eu-central-1": "https://api-euc1.plaud.ai",
+  "aws:ap-southeast-1": "https://api-apse1.plaud.ai",
 };
 const DEFAULT_API_BASE = "https://api.plaud.ai";
 
