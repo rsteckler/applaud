@@ -7,7 +7,7 @@ Importable [n8n](https://n8n.io) workflows that consume Applaud webhook events.
 Receives the Applaud webhook, filters for `transcript_ready` events, summarizes the transcript with Claude, and emails the result.
 
 ```
-Webhook → Config → IF (transcript_ready) → Claude (HTTP) → Email
+Webhook → Config → Verify signature → IF (transcript_ready) → Claude (HTTP) → Email
 ```
 
 ### Import
@@ -19,6 +19,7 @@ Webhook → Config → IF (transcript_ready) → Claude (HTTP) → Email
    - `subject_prefix` — prepended to the email subject
    - `claude_model` — e.g. `claude-sonnet-4-6` or `claude-opus-4-6`
    - `max_summary_tokens` — Claude `max_tokens`
+   - `webhook_secret` — (optional) paste the same secret you set in Applaud's Settings page to enable HMAC-SHA256 verification on every incoming POST. Leave empty to accept unsigned requests (matches Applaud's default).
 3. Assign credentials (one-time):
    - **Summarize with Claude** node → Anthropic API credential
    - **Email Summary** node → SMTP credential
@@ -33,6 +34,17 @@ The **Config** node is a `Set` node with `includeOtherFields: true`, so it injec
 - From anywhere later in the flow, via `$('Config').item.json.recipient_email` — this survives through the Claude HTTP node's response overwriting `$json`.
 
 The original webhook body stays reachable anywhere via `$('Applaud Webhook').item.json.body`, which is how the email subject/footer pulls the recording filename and media URLs.
+
+### Signature verification
+
+The **Verify signature** Code node reads `webhook_secret` from the Config node and, when set, verifies the `X-Applaud-Signature: sha256=<hex>` header over the exact raw request body using HMAC-SHA256 and a timing-safe comparison. On any mismatch — missing header, wrong digest, or unavailable raw bytes — the node throws and the execution halts with the error visible in n8n's executions view.
+
+Two details worth knowing:
+
+- The **Applaud Webhook** node has `rawBody: true` enabled so the verifier sees the exact bytes Applaud signed. Re-serializing the parsed JSON would produce a different byte string and break the HMAC. After verification, the Code node parses the raw bytes back into `$json.body` so downstream nodes (`Is Transcript Ready?`, etc.) keep working as before.
+- Leaving `webhook_secret` empty is a **skip verification** state, mirroring Applaud's server: no secret on the server → no header sent → nothing for n8n to check. For production use, set matching secrets on both sides.
+
+See the **Verifying the signature** section of the repo root [`README.md`](../README.md) for the algorithm spec and Node / Python receiver snippets.
 
 ### Event shape reference
 

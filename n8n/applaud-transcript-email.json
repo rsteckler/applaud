@@ -3,8 +3,8 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Applaud → Claude → Email\n\nThis flow receives Applaud webhook events, filters for `transcript_ready`, summarizes the transcript with Claude, and emails the result.\n\n**Before running:**\n1. Open the **Config** node and edit the values (recipient, sender, model, subject prefix).\n2. Assign an **Anthropic API** credential to the *Summarize with Claude* node.\n3. Assign an **SMTP** credential to the *Email Summary* node.\n4. Activate the workflow and copy the webhook URL into Applaud's Settings → Webhook.",
-        "height": 320,
+        "content": "## Applaud → Claude → Email\n\nThis flow receives Applaud webhook events, filters for `transcript_ready`, summarizes the transcript with Claude, and emails the result.\n\n**Before running:**\n1. Open the **Config** node and edit the values (recipient, sender, model, subject prefix).\n2. (Optional) Paste your Applaud webhook signing secret into `webhook_secret` in the Config node to enable HMAC-SHA256 verification.\n3. Assign an **Anthropic API** credential to the *Summarize with Claude* node.\n4. Assign an **SMTP** credential to the *Email Summary* node.\n5. Activate the workflow and copy the webhook URL into Applaud's Settings → Webhook.",
+        "height": 340,
         "width": 420
       },
       "id": "579202dd-15e0-43f4-99a5-d42cc59fa39e",
@@ -18,8 +18,8 @@
     },
     {
       "parameters": {
-        "content": "### Edit me ⬆️\n\nAll user-editable variables live in this one **Config** node. Downstream nodes read from it — you don't need to open every node to change the recipient, sender, model, or subject.",
-        "height": 200,
+        "content": "### Edit me ⬆️\n\nAll user-editable variables live in this one **Config** node. Downstream nodes read from it — you don't need to open every node to change the recipient, sender, model, or subject.\n\nSet `webhook_secret` to the same value you configured in Applaud Settings to reject forged POSTs. Leave empty to skip verification.",
+        "height": 240,
         "width": 280
       },
       "id": "3c835fe1-741f-4f07-aff8-5f6261e9f14d",
@@ -35,7 +35,9 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "applaud",
-        "options": {}
+        "options": {
+          "rawBody": true
+        }
       },
       "id": "461deda0-ece9-4ddc-ad20-9cfe6d8a2b2e",
       "name": "Applaud Webhook",
@@ -86,6 +88,12 @@
               "name": "summarize_prompt",
               "value": "Summarize the following meeting/voice-memo transcript in 3–5 concise bullet points, then end with a one-sentence takeaway. Use markdown.",
               "type": "string"
+            },
+            {
+              "id": "cfg-7",
+              "name": "webhook_secret",
+              "value": "",
+              "type": "string"
             }
           ]
         },
@@ -98,6 +106,19 @@
       "typeVersion": 3.4,
       "position": [
         368,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { createHmac, timingSafeEqual } = require('crypto');\n\nfor (const item of $input.all()) {\n  const secret = String(item.json.webhook_secret || '');\n  if (!secret) continue;\n\n  const webhookItem = $('Applaud Webhook').first();\n  const headers = webhookItem.json.headers || {};\n  const header = headers['x-applaud-signature'] || '';\n\n  if (!header) {\n    throw new Error('HMAC verification failed: X-Applaud-Signature header missing (is a secret set in Applaud Settings?)');\n  }\n\n  let rawBuffer;\n  if (webhookItem.binary && webhookItem.binary.data && webhookItem.binary.data.data) {\n    rawBuffer = Buffer.from(webhookItem.binary.data.data, 'base64');\n  } else if (Buffer.isBuffer(webhookItem.json.body)) {\n    rawBuffer = webhookItem.json.body;\n  } else if (typeof webhookItem.json.body === 'string') {\n    rawBuffer = Buffer.from(webhookItem.json.body, 'utf8');\n  } else {\n    throw new Error('HMAC verification: raw body not available — ensure the Applaud Webhook node has the rawBody option enabled');\n  }\n\n  const expected = 'sha256=' + createHmac('sha256', secret).update(rawBuffer).digest('hex');\n  const a = Buffer.from(header);\n  const b = Buffer.from(expected);\n  if (a.length !== b.length || !timingSafeEqual(a, b)) {\n    throw new Error('HMAC verification failed: signature mismatch');\n  }\n\n  try {\n    item.json.body = JSON.parse(rawBuffer.toString('utf8'));\n  } catch (err) {\n    // leave body as-is; downstream will surface a natural error\n  }\n}\n\nreturn $input.all();\n"
+      },
+      "id": "f3a91b74-5c8e-4d12-a9f0-6b2c73e5d811",
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
         368
       ]
     },
@@ -139,7 +160,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        608,
+        848,
         368
       ]
     },
@@ -172,7 +193,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        848,
+        1088,
         288
       ]
     },
@@ -190,7 +211,7 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [
-        1088,
+        1328,
         288
       ]
     }
@@ -209,6 +230,17 @@
       ]
     },
     "Config": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature": {
       "main": [
         [
           {
@@ -247,7 +279,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "1",
+  "versionId": "2",
   "meta": {
     "templateCredsSetupCompleted": false
   },
