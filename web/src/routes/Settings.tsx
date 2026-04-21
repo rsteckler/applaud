@@ -27,6 +27,7 @@ export function Settings(): JSX.Element {
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
   const [secretExists, setSecretExists] = useState(false);
+  const [secretTouched, setSecretTouched] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
   const [pollMinutes, setPollMinutes] = useState(10);
   const [importPlaudDeleted, setImportPlaudDeleted] = useState(false);
@@ -42,6 +43,7 @@ export function Settings(): JSX.Element {
     setWebhookUrl(c.webhook?.url ?? "");
     setSecretExists(Boolean(c.webhook?.secret));
     setWebhookSecret("");
+    setSecretTouched(false);
     setShowSecret(false);
     setPollMinutes(c.pollIntervalMinutes);
     setImportPlaudDeleted(c.importPlaudDeleted ?? false);
@@ -84,12 +86,14 @@ export function Settings(): JSX.Element {
     const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
     setWebhookSecret(hex);
     setShowSecret(true);
+    setSecretTouched(true);
     setDirty(true);
   };
 
   const clearSecret = (): void => {
     setWebhookSecret("");
     setSecretExists(false);
+    setSecretTouched(true);
     setDirty(true);
   };
 
@@ -286,6 +290,7 @@ export function Settings(): JSX.Element {
                 value={webhookSecret}
                 onChange={(e) => {
                   setWebhookSecret(e.target.value);
+                  setSecretTouched(true);
                   setDirty(true);
                 }}
                 autoComplete="off"
@@ -316,6 +321,11 @@ export function Settings(): JSX.Element {
                 </button>
               )}
             </div>
+            {secretTouched && (
+              <p className="text-xs font-semibold text-tertiary bg-tertiary/10 border border-tertiary/30 rounded-lg px-3 py-2">
+                Click <strong>Save Settings</strong> at the bottom of the page before using <strong>Test</strong> — the new secret is not active until saved.
+              </p>
+            )}
             <p className="text-xs text-on-surface-variant">
               When set, outgoing webhooks include <span className="font-mono">X-Applaud-Signature: sha256=&lt;hex&gt;</span>{" "}
               (HMAC-SHA256 of the raw body). See the README for receiver verification snippets.
