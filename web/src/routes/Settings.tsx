@@ -25,6 +25,9 @@ export function Settings(): JSX.Element {
   });
 
   const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [secretExists, setSecretExists] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
   const [pollMinutes, setPollMinutes] = useState(10);
   const [importPlaudDeleted, setImportPlaudDeleted] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -37,6 +40,9 @@ export function Settings(): JSX.Element {
     if (!cfg.data) return;
     const c = cfg.data.config;
     setWebhookUrl(c.webhook?.url ?? "");
+    setSecretExists(Boolean(c.webhook?.secret));
+    setWebhookSecret("");
+    setShowSecret(false);
     setPollMinutes(c.pollIntervalMinutes);
     setImportPlaudDeleted(c.importPlaudDeleted ?? false);
     setDirty(false);
@@ -49,10 +55,17 @@ export function Settings(): JSX.Element {
   const save = async (): Promise<void> => {
     setSaving(true);
     try {
+      const url = webhookUrl.trim();
+      const webhook = url
+        ? {
+            url,
+            enabled: true,
+            // Sent value: new secret if user typed one, sentinel to preserve existing, empty to clear.
+            secret: webhookSecret.length > 0 ? webhookSecret : secretExists ? "***REDACTED***" : "",
+          }
+        : null;
       await api.updateConfig({
-        webhook: webhookUrl.trim()
-          ? { url: webhookUrl.trim(), enabled: true }
-          : null,
+        webhook,
         pollIntervalMinutes: pollMinutes,
         importPlaudDeleted,
       });
@@ -63,6 +76,21 @@ export function Settings(): JSX.Element {
     } finally {
       setSaving(false);
     }
+  };
+
+  const generateSecret = (): void => {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    setWebhookSecret(hex);
+    setShowSecret(true);
+    setDirty(true);
+  };
+
+  const clearSecret = (): void => {
+    setWebhookSecret("");
+    setSecretExists(false);
+    setDirty(true);
   };
 
   const test = async (): Promise<void> => {
@@ -241,6 +269,57 @@ export function Settings(): JSX.Element {
             >
               Test
             </button>
+          </div>
+          <div className="space-y-2">
+            <label className="font-label text-xs font-semibold text-on-surface-variant uppercase tracking-wider">
+              Signing secret (optional)
+            </label>
+            <div className="flex gap-3">
+              <input
+                className="input py-3 border-transparent font-mono"
+                type={showSecret ? "text" : "password"}
+                placeholder={
+                  secretExists
+                    ? "Leave empty to keep current secret"
+                    : "Paste a secret or click Generate"
+                }
+                value={webhookSecret}
+                onChange={(e) => {
+                  setWebhookSecret(e.target.value);
+                  setDirty(true);
+                }}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className="px-4 py-3 rounded-lg border border-outline-variant/30 text-on-surface text-sm font-semibold hover:bg-surface-container-highest transition-colors"
+                onClick={() => setShowSecret((v) => !v)}
+                disabled={!webhookSecret}
+              >
+                {showSecret ? "Hide" : "Show"}
+              </button>
+              <button
+                type="button"
+                className="px-4 py-3 rounded-lg border border-primary/30 text-primary text-sm font-semibold hover:bg-primary/10 transition-colors"
+                onClick={generateSecret}
+              >
+                Generate
+              </button>
+              {secretExists && webhookSecret.length === 0 && (
+                <button
+                  type="button"
+                  className="px-4 py-3 rounded-lg border border-error/30 text-error text-sm font-semibold hover:bg-error/10 transition-colors"
+                  onClick={clearSecret}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-on-surface-variant">
+              When set, outgoing webhooks include <span className="font-mono">X-Applaud-Signature: sha256=&lt;hex&gt;</span>{" "}
+              (HMAC-SHA256 of the raw body). See the README for receiver verification snippets.
+            </p>
           </div>
           {testResult && (
             <div

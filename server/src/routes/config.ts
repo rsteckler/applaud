@@ -15,11 +15,20 @@ import { clearSyncIgnore } from "../sync/state.js";
 
 export const configRouter = Router();
 
+const SECRET_REDACTED = "***REDACTED***";
+
+function redactConfig(cfg: ReturnType<typeof loadConfig>): ReturnType<typeof loadConfig> {
+  return {
+    ...cfg,
+    token: cfg.token ? SECRET_REDACTED : null,
+    webhook: cfg.webhook
+      ? { ...cfg.webhook, ...(cfg.webhook.secret ? { secret: SECRET_REDACTED } : {}) }
+      : cfg.webhook,
+  };
+}
+
 configRouter.get("/", (_req, res) => {
-  const cfg = loadConfig();
-  // Redact the token — we never send it to the browser.
-  const redacted = { ...cfg, token: cfg.token ? "***REDACTED***" : null };
-  res.json({ config: redacted });
+  res.json({ config: redactConfig(loadConfig()) });
 });
 
 const PatchSchema = z.object({
@@ -49,14 +58,25 @@ configRouter.post("/", (req, res) => {
     return;
   }
   const patch = parsed.data;
-  const prevImportPlaudDeleted = loadConfig().importPlaudDeleted;
+  const prev = loadConfig();
+  const prevImportPlaudDeleted = prev.importPlaudDeleted;
   const normalized = {
     ...patch,
     webhook: patch.webhook
       ? {
           url: patch.webhook.url,
           enabled: patch.webhook.enabled ?? patch.webhook.url.length > 0,
-          ...(patch.webhook.secret ? { secret: patch.webhook.secret } : {}),
+          ...(patch.webhook.secret === undefined
+            ? prev.webhook?.secret
+              ? { secret: prev.webhook.secret }
+              : {}
+            : patch.webhook.secret === SECRET_REDACTED
+              ? prev.webhook?.secret
+                ? { secret: prev.webhook.secret }
+                : {}
+              : patch.webhook.secret.length > 0
+                ? { secret: patch.webhook.secret }
+                : {}),
         }
       : patch.webhook,
   };
@@ -64,7 +84,7 @@ configRouter.post("/", (req, res) => {
   if (patch.importPlaudDeleted === true && !prevImportPlaudDeleted) {
     void poller.trigger();
   }
-  res.json({ config: { ...next, token: next.token ? "***REDACTED***" : null } });
+  res.json({ config: redactConfig(next) });
 });
 
 const TestWebhookSchema = z.object({ url: z.string().url() });
