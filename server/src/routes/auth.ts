@@ -2,8 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { findToken } from "../auth/chrome-leveldb.js";
 import { startBrowserWatch, subscribeWatch } from "../auth/browser-watch.js";
-import { plaudFetch, PlaudAuthError } from "../plaud/client.js";
-import { updateConfig } from "../config.js";
+import { plaudFetch, PlaudAuthError, resolveRegionFromDomain } from "../plaud/client.js";
+import { loadConfig, updateConfig } from "../config.js";
 import { logger } from "../logger.js";
 import type { AuthDetectResponse, AuthValidateResponse } from "@applaud/shared";
 
@@ -31,17 +31,39 @@ function parseJwt(jwt: string): { iat: number | null; exp: number | null; email:
   }
 }
 
-async function validateToken(token: string): Promise<AuthValidateResponse> {
+async function validateToken(token: string): Promise<AuthValidateResponse & { resolvedRegion?: string }> {
+  const testPath = "/file/simple/web?skip=0&limit=1&is_trash=2&sort_by=start_time&is_desc=true";
   try {
-    const res = await plaudFetch(
-      "/file/simple/web?skip=0&limit=1&is_trash=2&sort_by=start_time&is_desc=true",
-      { authOverride: token },
-    );
+    const res = await plaudFetch(testPath, { authOverride: token });
     if (res.status !== 200) {
       const body = await res.text().catch(() => "");
       return { ok: false, error: `Plaud returned HTTP ${res.status}: ${body.slice(0, 200)}` };
     }
-    const body = (await res.json()) as { msg?: string; status?: number };
+    const body = (await res.json()) as { msg?: string; status?: number; data?: { domains?: { api?: string } } };
+
+    // Handle region mismatch: Plaud tells us the correct API domain.
+    if (body.status === -302 && body.data?.domains?.api) {
+      const correctDomain = body.data.domains.api;
+      const correctRegion = resolveRegionFromDomain(correctDomain);
+      if (correctRegion) {
+        logger.info({ correctDomain, correctRegion }, "region mismatch during token validation — retrying");
+        // Temporarily set the correct region so the retry hits the right endpoint.
+        updateConfig({ plaudRegion: correctRegion });
+        const retryRes = await plaudFetch(testPath, { authOverride: token });
+        if (retryRes.status !== 200) {
+          const retryBody = await retryRes.text().catch(() => "");
+          return { ok: false, error: `Plaud returned HTTP ${retryRes.status} after region correction: ${retryBody.slice(0, 200)}` };
+        }
+        const retryBody = (await retryRes.json()) as { msg?: string; status?: number };
+        if (retryBody.status !== 0) {
+          return { ok: false, error: `Plaud returned msg=${retryBody.msg} after region correction` };
+        }
+        const { exp } = parseJwt(token);
+        return { ok: true, exp: exp ?? undefined, resolvedRegion: correctRegion };
+      }
+      return { ok: false, error: `Plaud region mismatch: server says use ${correctDomain} but it's not a known endpoint` };
+    }
+
     if (body.status !== 0) {
       return { ok: false, error: `Plaud returned msg=${body.msg}` };
     }
@@ -96,19 +118,22 @@ authRouter.post("/accept", async (req, res) => {
     return;
   }
   // Extract region from JWT and store it before validation so plaudFetch
-  // hits the correct regional API endpoint.
-  const { email: jwtEmail, exp, region } = parseJwt(jwt);
-  if (region) updateConfig({ plaudRegion: region });
+  // hits the correct regional API endpoint. If validation discovers a
+  // different region (via Plaud's -302 redirect), that takes precedence.
+  const { email: jwtEmail, exp, region: jwtRegion } = parseJwt(jwt);
+  if (jwtRegion) updateConfig({ plaudRegion: jwtRegion });
 
   const v = await validateToken(jwt);
   if (!v.ok) {
     res.status(400).json({ ok: false, error: v.error });
     return;
   }
+  // Use the region that actually worked, not necessarily the JWT claim.
+  const effectiveRegion = v.resolvedRegion ?? loadConfig().plaudRegion ?? jwtRegion;
   // Prefer client-provided email (comes from LevelDB scan in the detect flow);
   // fall back to anything the JWT itself carries.
   const email = parsed.data.email ?? jwtEmail ?? null;
-  updateConfig({ token: jwt, tokenExp: exp, tokenEmail: email, plaudRegion: region });
+  updateConfig({ token: jwt, tokenExp: exp, tokenEmail: email, plaudRegion: effectiveRegion });
   res.json({ ok: true, email, exp });
 });
 
@@ -154,6 +179,9 @@ authRouter.get("/watch/:id/events", (req, res) => {
     send(e);
     if (e.type === "found") {
       // Persist the found token immediately so the UI can advance.
+      // Note: the JWT region claim may not match the user's actual region
+      // (Plaud can migrate accounts). The first sync or validate call
+      // will auto-correct via the -302 redirect handler.
       const t = e.token;
       const { email, exp, region } = parseJwt(t.token);
       updateConfig({

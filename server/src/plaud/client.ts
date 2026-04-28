@@ -8,6 +8,25 @@ const REGION_API_BASES: Record<string, string> = {
 };
 const DEFAULT_API_BASE = "https://api.plaud.ai";
 
+/** Reverse lookup: API base URL → region key. */
+const API_BASE_TO_REGION = new Map(
+  Object.entries(REGION_API_BASES).map(([region, url]) => [new URL(url).hostname, region]),
+);
+
+/**
+ * Given an API base URL returned by Plaud's region-mismatch response,
+ * resolve the corresponding region key (e.g. "aws:eu-central-1").
+ * Returns `null` if the hostname is not in the known map.
+ */
+export function resolveRegionFromDomain(apiBaseUrl: string): string | null {
+  try {
+    const hostname = new URL(apiBaseUrl).hostname;
+    return API_BASE_TO_REGION.get(hostname) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function getPlaudApiBase(): string {
   const cfg = loadConfig();
   if (cfg.plaudRegion) {
@@ -93,6 +112,22 @@ export async function plaudFetch(pathOrUrl: string, init: FetchInit = {}): Promi
   );
 }
 
+/** Shape of Plaud's region-mismatch error response (status -302). */
+interface PlaudRegionMismatch {
+  status: -302;
+  msg: string;
+  data?: { domains?: { api?: string } };
+}
+
+function isRegionMismatch(body: unknown): body is PlaudRegionMismatch {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    (body as PlaudRegionMismatch).status === -302 &&
+    typeof (body as PlaudRegionMismatch).data?.domains?.api === "string"
+  );
+}
+
 export async function plaudJson<T>(path: string, init: FetchInit = {}): Promise<T> {
   const res = await plaudFetch(path, init);
   const text = await res.text();
@@ -103,8 +138,9 @@ export async function plaudJson<T>(path: string, init: FetchInit = {}): Promise<
       text.slice(0, 500),
     );
   }
+  let parsed: unknown;
   try {
-    return JSON.parse(text) as T;
+    parsed = JSON.parse(text);
   } catch (err) {
     throw new PlaudApiError(
       `Plaud ${path} returned non-JSON: ${String(err)}`,
@@ -112,4 +148,56 @@ export async function plaudJson<T>(path: string, init: FetchInit = {}): Promise<
       text.slice(0, 500),
     );
   }
+
+  // Handle region mismatch: Plaud returns HTTP 200 with a JSON body
+  // containing status -302 and the correct regional API domain.
+  if (isRegionMismatch(parsed)) {
+    const correctDomain = parsed.data!.domains!.api!;
+    const correctRegion = resolveRegionFromDomain(correctDomain);
+
+    // Only persist the corrected region when using the stored token
+    // (not for one-off authOverride validation calls).
+    if (!init.authOverride) {
+      if (correctRegion) {
+        logger.info({ correctDomain, correctRegion }, "Plaud region mismatch — updating config and retrying");
+        updateConfig({ plaudRegion: correctRegion });
+      } else {
+        logger.warn({ correctDomain }, "Plaud region mismatch — unknown domain, cannot auto-correct");
+        throw new PlaudApiError(
+          `Plaud region mismatch: server says use ${correctDomain} but it's not a known endpoint`,
+          200,
+          text.slice(0, 500),
+        );
+      }
+    } else {
+      // For authOverride calls, temporarily switch the base for the retry
+      // but don't persist — the caller (e.g. /accept) decides what to save.
+      if (correctRegion) {
+        logger.info({ correctDomain, correctRegion }, "Plaud region mismatch during token validation — retrying");
+        updateConfig({ plaudRegion: correctRegion });
+      }
+    }
+
+    // Retry once with the corrected endpoint.
+    const retryRes = await plaudFetch(path, init);
+    const retryText = await retryRes.text();
+    if (!retryRes.ok) {
+      throw new PlaudApiError(
+        `Plaud ${init.method ?? "GET"} ${path} → ${retryRes.status} (after region correction)`,
+        retryRes.status,
+        retryText.slice(0, 500),
+      );
+    }
+    try {
+      return JSON.parse(retryText) as T;
+    } catch (err) {
+      throw new PlaudApiError(
+        `Plaud ${path} returned non-JSON after region correction: ${String(err)}`,
+        retryRes.status,
+        retryText.slice(0, 500),
+      );
+    }
+  }
+
+  return parsed as T;
 }
