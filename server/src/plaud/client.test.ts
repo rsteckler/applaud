@@ -127,7 +127,7 @@ describe("plaudJson — region-mismatch retry (-302)", () => {
     expect(updateConfig).not.toHaveBeenCalled();
   });
 
-  it("authOverride path persists region but does NOT trigger an unauthenticated retry loop", async () => {
+  it("authOverride path persists region and retries using the override token (not the stored token)", async () => {
     mock.enqueue({
       status: 200,
       body: JSON.stringify({
@@ -159,6 +159,24 @@ describe("plaudJson — region-mismatch retry (-302)", () => {
     const auth2 = (mock.calls[1]!.init!.headers as Record<string, string>)["authorization"];
     expect(auth1).toBe("Bearer candidate-token");
     expect(auth2).toBe("Bearer candidate-token");
+  });
+
+  it("authOverride path also throws PlaudApiError when -302 domain is unknown (no silent retry)", async () => {
+    mock.enqueue({
+      status: 200,
+      body: JSON.stringify({
+        status: -302,
+        msg: "wrong region",
+        data: { domains: { api: "https://api-rogue.plaud.ai" } },
+      }),
+    });
+    await expect(
+      plaudJson("/auth/validate", { method: "POST", body: "{}", authOverride: "candidate" }),
+    ).rejects.toBeInstanceOf(PlaudApiError);
+    // Single call — no retry against the same endpoint that would return the
+    // same -302 body and get silently parsed as T.
+    expect(mock.calls.length).toBe(1);
+    expect(updateConfig).not.toHaveBeenCalled();
   });
 
   it("does NOT trigger -302 retry on a normal successful response", async () => {

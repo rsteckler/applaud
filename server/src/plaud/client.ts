@@ -178,6 +178,19 @@ export async function plaudJson<T>(path: string, init: FetchInit = {}): Promise<
       if (correctRegion) {
         logger.info({ correctDomain, correctRegion }, "Plaud region mismatch during token validation — retrying");
         updateConfig({ plaudRegion: correctRegion });
+      } else {
+        // Without a region update, the retry would hit the same endpoint and
+        // get the same -302 — silently returning the error body to the caller
+        // typed as T. Fail fast instead.
+        logger.warn(
+          { correctDomain },
+          "Plaud region mismatch during token validation — unknown domain, cannot auto-correct",
+        );
+        throw new PlaudApiError(
+          `Plaud region mismatch: server says use ${correctDomain} but it's not a known endpoint`,
+          200,
+          text.slice(0, 500),
+        );
       }
     }
 

@@ -17,7 +17,10 @@ export function getDb(): Database.Database {
   return db;
 }
 
-/** Test-only: replace the cached DB with the given handle (e.g. an in-memory DB). */
+/**
+ * Test-only: replace the cached DB with the given handle (e.g. an in-memory DB).
+ * @internal — never call from production code paths.
+ */
 export function setDbForTests(handle: Database.Database | null): void {
   db = handle;
 }

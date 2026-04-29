@@ -15,10 +15,13 @@ export function setupTestDb(): Database.Database {
 }
 
 export function teardownTestDb(handle: Database.Database): void {
-  setDbForTests(null);
+  // Close the handle BEFORE clearing the singleton so that any in-flight
+  // microtask calling getDb() in the gap can't open a fresh file-backed DB
+  // and leak that handle when we then null it.
   try {
     handle.close();
   } catch {
     /* already closed */
   }
+  setDbForTests(null);
 }
