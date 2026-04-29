@@ -12,20 +12,9 @@ import { loadConfig, updateConfig } from "../config.js";
 import { testWebhook } from "../webhook/post.js";
 import { poller } from "../sync/poller.js";
 import { clearSyncIgnore } from "../sync/state.js";
+import { redactConfig, mergeWebhookSecret } from "./config-helpers.js";
 
 export const configRouter = Router();
-
-const SECRET_REDACTED = "***REDACTED***";
-
-function redactConfig(cfg: ReturnType<typeof loadConfig>): ReturnType<typeof loadConfig> {
-  return {
-    ...cfg,
-    token: cfg.token ? SECRET_REDACTED : null,
-    webhook: cfg.webhook
-      ? { ...cfg.webhook, ...(cfg.webhook.secret ? { secret: SECRET_REDACTED } : {}) }
-      : cfg.webhook,
-  };
-}
 
 configRouter.get("/", (_req, res) => {
   res.json({ config: redactConfig(loadConfig()) });
@@ -63,21 +52,14 @@ configRouter.post("/", (req, res) => {
   const normalized = {
     ...patch,
     webhook: patch.webhook
-      ? {
-          url: patch.webhook.url,
-          enabled: patch.webhook.enabled ?? patch.webhook.url.length > 0,
-          ...(patch.webhook.secret === undefined
-            ? prev.webhook?.secret
-              ? { secret: prev.webhook.secret }
-              : {}
-            : patch.webhook.secret === SECRET_REDACTED
-              ? prev.webhook?.secret
-                ? { secret: prev.webhook.secret }
-                : {}
-              : patch.webhook.secret.length > 0
-                ? { secret: patch.webhook.secret }
-                : {}),
-        }
+      ? (() => {
+          const merged = mergeWebhookSecret(prev.webhook?.secret, patch.webhook.secret);
+          return {
+            url: patch.webhook.url,
+            enabled: patch.webhook.enabled ?? patch.webhook.url.length > 0,
+            ...(merged ? { secret: merged } : {}),
+          };
+        })()
       : patch.webhook,
   };
   const next = updateConfig(normalized);

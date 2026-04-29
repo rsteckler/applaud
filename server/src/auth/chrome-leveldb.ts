@@ -4,6 +4,7 @@ import path from "node:path";
 import { ClassicLevel } from "classic-level";
 import { logger } from "../logger.js";
 import { discoverProfiles, type BrowserProfile } from "./profiles.js";
+import { parseJwtClaims } from "./jwt.js";
 
 const ORIGIN_PREFIX = Buffer.concat([
   Buffer.from("_https://web.plaud.ai"),
@@ -34,19 +35,12 @@ function decodeValue(buf: Buffer): string {
   return buf.toString("utf8");
 }
 
-function parseJwt(jwt: string): { iat: number | null; exp: number | null } {
-  try {
-    const parts = jwt.split(".");
-    if (parts.length !== 3) return { iat: null, exp: null };
-    const payload = parts[1];
-    if (!payload) return { iat: null, exp: null };
-    const json = JSON.parse(
-      Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"),
-    ) as { iat?: number; exp?: number };
-    return { iat: json.iat ?? null, exp: json.exp ?? null };
-  } catch {
-    return { iat: null, exp: null };
-  }
+function tokenTimestamps(jwt: string): { iat: number | null; exp: number | null } {
+  const claims = parseJwtClaims(jwt);
+  return {
+    iat: typeof claims?.iat === "number" ? claims.iat : null,
+    exp: typeof claims?.exp === "number" ? claims.exp : null,
+  };
 }
 
 function copyProfileToTemp(srcLeveldb: string): string {
@@ -109,7 +103,7 @@ async function scanProfile(p: BrowserProfile): Promise<FoundToken | null> {
       }
 
       if (!token) return null;
-      const { iat, exp } = parseJwt(token);
+      const { iat, exp } = tokenTimestamps(token);
       return { token, browser: p.browser, profile: p.profile, email, iat, exp };
     } finally {
       try {
