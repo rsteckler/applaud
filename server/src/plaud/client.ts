@@ -170,8 +170,11 @@ export async function plaudJson<T>(path: string, init: FetchInit = {}): Promise<
         );
       }
     } else {
-      // For authOverride calls, temporarily switch the base for the retry
-      // but don't persist — the caller (e.g. /accept) decides what to save.
+      // For authOverride calls, persist the corrected region so the retry
+      // (and any concurrent stored-token calls) hit the right endpoint.
+      // The caller (e.g. /accept) is expected to overwrite plaudRegion
+      // afterward based on its own decision — see `resolvedRegion` in the
+      // /accept handler.
       if (correctRegion) {
         logger.info({ correctDomain, correctRegion }, "Plaud region mismatch during token validation — retrying");
         updateConfig({ plaudRegion: correctRegion });
