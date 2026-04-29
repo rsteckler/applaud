@@ -92,7 +92,7 @@ export async function fireWebhookForRecording(
   return fireRaw(cfg.webhook.url, payload, row.id, event, cfg.webhook.secret);
 }
 
-async function fireRaw(
+export async function fireRaw(
   url: string,
   payload: WebhookPayload,
   recordingId: string | null,
