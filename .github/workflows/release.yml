@@ -38,6 +38,9 @@ jobs:
           pnpm --filter @applaud/shared build
           pnpm -r typecheck
 
+      - name: Test
+        run: pnpm test
+
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 

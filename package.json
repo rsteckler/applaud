@@ -14,10 +14,15 @@
     "start": "pnpm build && node server/dist/index.js",
     "start:nobuild": "node server/dist/index.js",
     "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @applaud/shared build && vitest run",
+    "test:watch": "vitest",
+    "coverage": "pnpm --filter @applaud/shared build && vitest run --coverage",
     "clean": "pnpm -r clean && rm -rf node_modules"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.0",
     "concurrently": "^9.0.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
   }
 }

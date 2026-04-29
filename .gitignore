@@ -10,3 +10,4 @@ recordings/
 *.tsbuildinfo
 .vite/
 .claude/
+coverage/
