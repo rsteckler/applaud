@@ -18,15 +18,13 @@ export function parseJwtClaims(jwt: string): JwtClaims | null {
   if (parts.length !== 3) return null;
   const payload = parts[1];
   if (!payload) return null;
-  // base64url → base64 + restore stripped padding
+  // base64url → base64 + restore stripped padding.
+  // Buffer.from(str, "base64") never throws on bad input — it silently
+  // skips invalid characters and returns whatever it managed to decode.
+  // Any garbage bytes fall through to JSON.parse, which catches them.
   const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
   const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
-  let json: string;
-  try {
-    json = Buffer.from(padded, "base64").toString("utf8");
-  } catch {
-    return null;
-  }
+  const json = Buffer.from(padded, "base64").toString("utf8");
   try {
     return JSON.parse(json) as JwtClaims;
   } catch {

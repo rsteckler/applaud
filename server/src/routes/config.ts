@@ -49,17 +49,17 @@ configRouter.post("/", (req, res) => {
   const patch = parsed.data;
   const prev = loadConfig();
   const prevImportPlaudDeleted = prev.importPlaudDeleted;
+  const mergedSecret = patch.webhook
+    ? mergeWebhookSecret(prev.webhook?.secret, patch.webhook.secret)
+    : undefined;
   const normalized = {
     ...patch,
     webhook: patch.webhook
-      ? (() => {
-          const merged = mergeWebhookSecret(prev.webhook?.secret, patch.webhook.secret);
-          return {
-            url: patch.webhook.url,
-            enabled: patch.webhook.enabled ?? patch.webhook.url.length > 0,
-            ...(merged ? { secret: merged } : {}),
-          };
-        })()
+      ? {
+          url: patch.webhook.url,
+          enabled: patch.webhook.enabled ?? patch.webhook.url.length > 0,
+          ...(mergedSecret ? { secret: mergedSecret } : {}),
+        }
       : patch.webhook,
   };
   const next = updateConfig(normalized);

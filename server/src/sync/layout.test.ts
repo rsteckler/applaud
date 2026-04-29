@@ -45,6 +45,18 @@ describe("sanitizeFilename", () => {
     expect(sanitizeFilename("meeting 🎙")).toBe("meeting_🎙");
   });
 
+  it.each([
+    ["", ""],
+    ["//:", ""],
+    ["...", ""],
+    ["___", ""],
+  ])(
+    "returns empty string for input that sanitizes to nothing: %j",
+    (input, expected) => {
+      expect(sanitizeFilename(input)).toBe(expected);
+    },
+  );
+
   it("two filenames differing only in unsafe chars produce different sanitized output when there's other content", () => {
     // "foo bar" vs "foo/bar" — both become "foo_bar"; this is acceptable collapse,
     // but adding any distinguishing safe char preserves the difference.
