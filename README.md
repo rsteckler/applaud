@@ -9,8 +9,6 @@ A self-hosted local server that mirrors your [Plaud](https://plaud.ai) recording
 >
 > **Want more features without the complexity of self-hosting?** Check out the professionally managed version at **[cordari.ai](https://cordari.ai)**. It includes everything in Applaud plus additional destinations — Google Drive, Notion, Obsidian, reMarkable tablet, Google Calendar, Todoist, and email (in addition to webhooks / n8n) — and supports multiple AI summaries per recording.
 
-![Recordings dashboard](assets/Screenshot%202026-04-11%20203407.png)
-
 ## Features
 
 - **Automatic sync** — polls Plaud every 10 minutes (configurable) and downloads audio, transcripts, and AI summaries to local disk
@@ -21,6 +19,8 @@ A self-hosted local server that mirrors your [Plaud](https://plaud.ai) recording
 - **Webhooks** — POST JSON payloads on `audio_ready` and `transcript_ready` events for n8n, Zapier, or custom integrations
 - **Dark & light mode** — toggle between themes, defaults to system preference
 - **Setup wizard** — guided 5-step onboarding (auth, folder, webhook, review)
+
+![Recordings dashboard](assets/Screenshot%202026-04-11%20203407.png)
 
 ![Recording detail](assets/Screenshot%202026-04-11%20203843.png)
 
