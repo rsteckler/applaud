@@ -64,7 +64,11 @@ function getToken(): string {
   return cfg.token;
 }
 
-const USER_AGENT = "applaud/0.1.0 (+https://github.com/rsteckler/applaud)";
+// Cloudflare's bot protection on api.plaud.ai 403s the "applaud/x.y.z" UA
+// (see https://github.com/rsteckler/applaud/issues/26). Present as a normal
+// desktop browser so the poller passes the WAF check.
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
 export async function plaudFetch(pathOrUrl: string, init: FetchInit = {}): Promise<Response> {
   const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${getPlaudApiBase()}${pathOrUrl}`;
