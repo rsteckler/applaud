@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createCipheriv } from "node:crypto";
@@ -76,5 +76,28 @@ describe("readPlaudCookieRows", () => {
     expect(names).toEqual(["pld_urt", "pld_ut"]);
     expect(rows.every((r) => r.hostKey.endsWith("plaud.ai") && r.hostKey !== "evilplaud.ai")).toBe(true);
     expect(rows.find((r) => r.name === "pld_ut")?.encryptedValue).toEqual(Buffer.from([1, 2, 3]));
+  });
+
+  it("reads rows still sitting in the WAL sidecar (uncheckpointed writes)", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "cookie-wal-test-"));
+    const dbPath = path.join(dir, "Cookies");
+    const db = new Database(dbPath);
+    db.pragma("journal_mode = WAL");
+    db.pragma("wal_autocheckpoint = 0"); // keep writes in -wal, not the main file
+    db.exec("CREATE TABLE cookies (host_key TEXT, name TEXT, encrypted_value BLOB, value TEXT)");
+    const insert = db.prepare(
+      "INSERT INTO cookies (host_key, name, encrypted_value, value) VALUES (?, ?, ?, ?)",
+    );
+    insert.run(".plaud.ai", "pld_ut", Buffer.from([1, 2, 3]), "");
+    insert.run(".plaud.ai", "pld_urt", Buffer.from([4, 5, 6]), "");
+    // Do NOT close/checkpoint: the table + rows live in Cookies-wal right now,
+    // so a copy of only the main file would see nothing (the pre-fix behavior).
+    expect(existsSync(dbPath + "-wal")).toBe(true);
+    try {
+      const rows = readPlaudCookieRows(dbPath);
+      expect(rows.map((r) => r.name).sort()).toEqual(["pld_urt", "pld_ut"]);
+    } finally {
+      db.close();
+    }
   });
 });

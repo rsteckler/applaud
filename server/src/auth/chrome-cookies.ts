@@ -19,7 +19,7 @@
 // fall back to the manual paste flow. All failures are non-fatal: a profile we
 // can't read is skipped, and the caller degrades to manual paste.
 
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir, platform } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -166,14 +166,26 @@ function cookieDbPath(profileDir: string): string | null {
 /**
  * Read the `pld_ut` / `pld_urt` rows out of a Chromium cookie SQLite file.
  * Copies the DB to a temp path first (the live file is locked while the
- * browser runs) and opens it read-only. Exported for testing.
+ * browser runs). Chromium keeps the cookie store in WAL mode, so a cookie set
+ * moments ago — e.g. the login `browser-watch` is watching for — can still be
+ * sitting in the `-wal` sidecar rather than the main file. We copy the sidecars
+ * alongside the main DB and open the private copy read-write so SQLite replays
+ * the WAL, instead of silently reading a stale (or empty) main file.
+ * Exported for testing.
  */
 export function readPlaudCookieRows(dbPath: string): CookieRow[] {
   const tmp = mkdtempSync(path.join(tmpdir(), "applaud-cookies-"));
   const tmpDb = path.join(tmp, "Cookies");
   try {
     cpSync(dbPath, tmpDb);
-    const db = new Database(tmpDb, { readonly: true, fileMustExist: true });
+    // `-wal`/`-shm` for WAL mode, `-journal` for the older rollback journal.
+    // `-shm` is rebuilt from `-wal` on open, but copy it when present anyway.
+    for (const suffix of ["-wal", "-shm", "-journal"]) {
+      const sidecar = dbPath + suffix;
+      if (existsSync(sidecar)) cpSync(sidecar, tmpDb + suffix);
+    }
+    // Read-write on our OWN temp copy (never the live file) so the WAL replays.
+    const db = new Database(tmpDb, { fileMustExist: true });
     try {
       const rows = db
         .prepare(
@@ -222,7 +234,8 @@ function readProfileCookies(p: BrowserProfile): FirstPartyCookies | null {
   const keys = candidateKeys(p.browser, p.userDataDir);
 
   const resolve = (name: string): string | null => {
-    // Prefer the newest cookie when a name appears under several host_keys.
+    // A cookie name is normally scoped to one host_key; if it appears under
+    // several, return the first that decrypts to a JWT.
     const matches = rows.filter((r) => r.name === name);
     for (const row of matches) {
       // Unencrypted fallback (older / test data): value already holds the JWT.

@@ -132,17 +132,19 @@ export function discoverProfiles(): BrowserProfile[] {
   const found: BrowserProfile[] = [];
   for (const r of roots()) {
     for (const p of listProfiles(r.userDataDir)) {
+      // Return every profile directory and let each reader check for its own
+      // on-disk store: the legacy scan needs `Local Storage/leveldb`, the
+      // first-party scan needs `Cookies` — two independent artifacts. Gating
+      // discovery on leveldb here would silently hide cookies from a profile
+      // that has them but never wrote localStorage.
       const profileDir = path.join(r.userDataDir, p);
-      const ldb = path.join(profileDir, "Local Storage", "leveldb");
-      if (existsSync(ldb)) {
-        found.push({
-          browser: r.browser,
-          profile: p,
-          leveldbPath: ldb,
-          profileDir,
-          userDataDir: r.userDataDir,
-        });
-      }
+      found.push({
+        browser: r.browser,
+        profile: p,
+        leveldbPath: path.join(profileDir, "Local Storage", "leveldb"),
+        profileDir,
+        userDataDir: r.userDataDir,
+      });
     }
   }
   return found;
