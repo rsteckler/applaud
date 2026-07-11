@@ -61,7 +61,9 @@ Requires Node.js >= 20 and pnpm >= 9.
 
 ## How it works
 
-1. **Auth:** Applaud reads your existing Plaud session from Chrome (or Edge / Brave / Arc / Vivaldi) by copying the browser's `Local Storage/leveldb` directory to a temp path (which sidesteps Chrome's file lock) and pulling the JWT bearer from the `tokenstr` key for `web.plaud.ai`. No passwords, no OAuth, no Playwright — just your existing session. Tokens are good for ~10 months.
+1. **Auth:** Applaud reads your existing Plaud session from Chrome (or Edge / Brave / Arc / Vivaldi). No passwords, no OAuth, no Playwright — just your existing session.
+   - **Legacy accounts** still expose a long-lived JWT in Local Storage. Applaud copies the browser's `Local Storage/leveldb` directory to a temp path (which sidesteps Chrome's file lock) and pulls the bearer from the `tokenstr` key for `web.plaud.ai`.
+   - **Newer accounts** (Plaud stopped exposing `tokenstr` — see issue #31) use short-lived cookies instead. When `tokenstr` is absent, Applaud reads the `pld_ut` (user token, ~1 day) and `pld_urt` (refresh token, ~30 days) cookies from Chromium's on-disk cookie store, decrypting them with the platform key (Linux login keyring / the well-known fallback, or the macOS Keychain). It then lists your workspaces and mints a short-lived workspace token for the API, refreshing the user token off the refresh token as it ages — the same first-party flow the RoveNotes Connector uses. On **Windows**, cookies are DPAPI-encrypted and can't be read off disk, so paste `pld_ut` / `pld_urt` from DevTools → Application → Cookies instead.
 
 2. **Sync:** every 10 minutes (configurable), the server calls `/file/simple/web` on `api.plaud.ai` to list your latest recordings. New ones get a per-recording subfolder, their audio streamed down from S3, and — once Plaud finishes transcribing — transcript + summary pulled via `/ai/transsumm/` (with S3 fallback for older recordings).
 
@@ -220,7 +222,7 @@ Applaud is a foreground process. To keep it running without a terminal:
 
 Settings live in `~/.config/applaud/settings.json` (or `~/Library/Application Support/applaud/` on macOS, `%APPDATA%\applaud\` on Windows). Recording state is in `state.sqlite` alongside. Both are managed through the web UI — you shouldn't need to edit them by hand.
 
-The bearer token is stored as plaintext in `settings.json` (with `chmod 600`). The file lives in a user-only directory, and the token's scope is equivalent to "read this user's own Plaud data." OS keychain integration is a future enhancement.
+The Plaud tokens are stored as plaintext in `settings.json` (with `chmod 600`) — the bearer/workspace token, and for newer accounts the `pld_ut` / `pld_urt` cookie values used to keep it fresh. The file lives in a user-only directory, and their scope is equivalent to "read this user's own Plaud data." The web UI never receives these values back — they're redacted in the config API. OS keychain integration is a future enhancement.
 
 ## Development
 

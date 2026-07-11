@@ -7,6 +7,12 @@ export interface BrowserProfile {
   browser: string;
   profile: string;
   leveldbPath: string;
+  /** The profile directory itself (parent of `Local Storage`). The on-disk
+   *  cookie store lives here, at `Cookies` or `Network/Cookies`. */
+  profileDir: string;
+  /** The browser's user-data root (parent of all profiles). `Local State`,
+   *  which holds the OS-wrapped cookie encryption key, lives here. */
+  userDataDir: string;
 }
 
 interface BrowserRoot {
@@ -126,10 +132,19 @@ export function discoverProfiles(): BrowserProfile[] {
   const found: BrowserProfile[] = [];
   for (const r of roots()) {
     for (const p of listProfiles(r.userDataDir)) {
-      const ldb = path.join(r.userDataDir, p, "Local Storage", "leveldb");
-      if (existsSync(ldb)) {
-        found.push({ browser: r.browser, profile: p, leveldbPath: ldb });
-      }
+      // Return every profile directory and let each reader check for its own
+      // on-disk store: the legacy scan needs `Local Storage/leveldb`, the
+      // first-party scan needs `Cookies` — two independent artifacts. Gating
+      // discovery on leveldb here would silently hide cookies from a profile
+      // that has them but never wrote localStorage.
+      const profileDir = path.join(r.userDataDir, p);
+      found.push({
+        browser: r.browser,
+        profile: p,
+        leveldbPath: path.join(profileDir, "Local Storage", "leveldb"),
+        profileDir,
+        userDataDir: r.userDataDir,
+      });
     }
   }
   return found;

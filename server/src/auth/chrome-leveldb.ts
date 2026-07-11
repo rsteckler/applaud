@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ClassicLevel } from "classic-level";
@@ -54,6 +54,9 @@ function copyProfileToTemp(srcLeveldb: string): string {
 }
 
 async function scanProfile(p: BrowserProfile): Promise<FoundToken | null> {
+  // discoverProfiles() no longer gates on leveldb existing (so cookie-only
+  // profiles aren't hidden), so guard our own store here.
+  if (!existsSync(p.leveldbPath)) return null;
   const tmp = copyProfileToTemp(p.leveldbPath);
   try {
     const db = new ClassicLevel<Buffer, Buffer>(tmp, {
