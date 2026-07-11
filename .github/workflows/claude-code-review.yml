@@ -64,6 +64,13 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Pass an explicit GitHub token so the action skips its OIDC →
+          # GitHub-App-token exchange, which was hard-failing with
+          # "401 Unauthorized - Invalid OIDC token" on every run (the actual
+          # error in the logs) despite the Claude GitHub App being installed.
+          # The built-in GITHUB_TOKEN already has the pull-requests/issues write
+          # perms granted above; the review posts as github-actions[bot].
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           # No plugin install. Earlier attempts using the `superpowers` plugin
           # blew up runtime: the plugin's SessionStart hook injects ~20KB of
           # "you have superpowers" preamble on every turn, AND we paid double
