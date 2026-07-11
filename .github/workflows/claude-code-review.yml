@@ -1,31 +1,42 @@
 name: Claude Code Review
 
-# Maintainer-triggered review (ROV: replaces the automatic pull_request_target
-# trigger). The reviewer NEVER runs automatically on a PR push. A maintainer
-# eyeballs the diff first, then fires the review by either:
-#   - commenting `/review` (optionally `/review <sha>`) on the PR, or
-#   - dispatching this workflow manually with a PR number.
+# Claude code review with two paths (replaces the old automatic
+# pull_request_target trigger):
 #
-# Why these triggers and not `pull_request`:
-#   `issue_comment` and `workflow_dispatch` both run the workflow from the BASE
-#   branch in the base-repo context, so they get the secrets + write token the
-#   review needs to post — even for FORK PRs. `pull_request` from a fork gets a
-#   read-only token and NO secrets, so it literally can't post a review. And
-#   unlike `pull_request`/`pull_request_target`, neither of these fires on a
-#   contributor's push, so unreviewed code can't slip past the gate.
+#   A. Trusted auto-review — a SAME-REPO (non-fork) PR reviews itself on push.
+#      Safe because a same-repo branch can only be pushed by someone with write
+#      access, so there's no untrusted code and full secrets are fine.
+#   B. Maintainer gate — a FORK PR is NOT auto-reviewed. A maintainer eyeballs
+#      the diff, then fires the review by commenting `/review` (optionally
+#      `/review <sha>`) on the PR, or dispatching this workflow manually.
+#
+# Why the gate can't just be `pull_request` for forks:
+#   `pull_request` from a fork gets a read-only token and NO secrets, so it
+#   literally can't post a review. `issue_comment` / `workflow_dispatch` run
+#   from the BASE branch in base-repo context, so they DO get the secrets +
+#   write token — and only fire when a maintainer asks.
 #
 # Safety model:
-#   1. Only a maintainer can trigger it (author_association gate below /
-#      workflow_dispatch requires write access).
-#   2. It reviews the EXACT head SHA present when the maintainer triggered it,
-#      and hard-fails if the PR head has moved since (a contributor pushing new
-#      commits after approval does NOT get auto-reviewed — the maintainer must
-#      re-run `/review` and re-eyeball).
-#   3. Fork content is treated as DATA ONLY — we read the diff and files, never
+#   1. Fork PRs run only when a maintainer triggers them (author_association
+#      gate / workflow_dispatch requires write access); same-repo PRs are
+#      trusted by definition.
+#   2. The gated paths review the EXACT head SHA present at trigger time and
+#      hard-fail if the head has moved since (a contributor pushing new commits
+#      after approval is NOT auto-reviewed — re-run `/review` and re-eyeball).
+#   3. PR content is treated as DATA ONLY — we read the diff and files, never
 #      `pnpm install` / build / execute the PR's code. Tools are locked to
 #      gh + Read/Grep/Glob/Write.
 
 on:
+  # Trusted auto-review: same-repo (non-fork) PRs review themselves. A same-repo
+  # branch can only be pushed by someone with write access, so it's trusted — it
+  # gets full secrets under `pull_request` (no fork/OIDC problem) and there's no
+  # untrusted code, so auto-running is safe. FORK PRs are filtered out in the job
+  # `if:` below and go through the maintainer `/review` gate instead.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Maintainer gate (fork PRs + manual re-reviews): a maintainer eyeballs the
+  # diff, then comments `/review` (optionally `/review <sha>`) on the PR.
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -39,17 +50,22 @@ on:
 
 # One review per PR at a time; a newer trigger supersedes an in-flight one.
 concurrency:
-  group: claude-review-${{ github.event.issue.number || github.event.inputs.pr }}
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}
   cancel-in-progress: true
 
 jobs:
   claude-review:
-    # Run only for: a manual dispatch, OR a maintainer commenting `/review` on a
-    # PR. `author_association` is OWNER/MEMBER/COLLABORATOR for people with write
-    # access; a fork contributor is CONTRIBUTOR/NONE and is ignored.
+    # Run for: (a) a manual dispatch; (b) a same-repo (non-fork) PR — trusted,
+    # auto-review; or (c) a maintainer commenting `/review` on a PR.
+    # `author_association` is OWNER/MEMBER/COLLABORATOR for people with write
+    # access; a fork contributor is CONTRIBUTOR/NONE and is ignored on (c), and
+    # (b) explicitly requires head repo == base repo so fork PRs never auto-run.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.issue.pull_request != null &&
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
        startsWith(github.event.comment.body, '/review') &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
@@ -69,13 +85,23 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           DISPATCH_PR: ${{ github.event.inputs.pr }}
           DISPATCH_SHA: ${{ github.event.inputs.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           COMMENT_PR: ${{ github.event.issue.number }}
           COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
           set -euo pipefail
+          # VERIFY=true means "reject if the PR head has moved since the SHA was
+          # captured" — that guard protects the maintainer-approval gate. For the
+          # trusted same-repo auto path the head SHA IS the trigger, so no guard.
+          VERIFY=true
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             PR="$DISPATCH_PR"
             SHA="$DISPATCH_SHA"
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
+            PR="$PR_NUMBER"
+            SHA="$PR_HEAD_SHA"
+            VERIFY=false
           else
             PR="$COMMENT_PR"
             # `/review <sha>` lets a maintainer pin an explicit commit.
@@ -86,7 +112,8 @@ jobs:
           fi
           echo "pr=$PR" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "Pinned PR #$PR at $SHA"
+          echo "verify=$VERIFY" >> "$GITHUB_OUTPUT"
+          echo "Reviewing PR #$PR at $SHA (verify-pin=$VERIFY)"
 
       - name: Checkout base (read-only — never execute fork code)
         uses: actions/checkout@v4
@@ -100,14 +127,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ steps.pin.outputs.pr }}
           SHA: ${{ steps.pin.outputs.sha }}
+          VERIFY: ${{ steps.pin.outputs.verify }}
         run: |
           set -euo pipefail
-          # The PR head commit (from the fork) is fetchable via the base repo's
-          # refs/pull/<n>/head. Fetch it and confirm it still equals the SHA the
-          # maintainer approved — if a contributor pushed after the gate, FAIL.
+          # The PR head commit (fork or same-repo) is fetchable via the base
+          # repo's refs/pull/<n>/head.
           git fetch --no-tags --depth=50 origin "refs/pull/${PR}/head"
           CURRENT="$(git rev-parse FETCH_HEAD)"
-          if [ "$CURRENT" != "$SHA" ]; then
+          # For the maintainer-approval paths (VERIFY=true), confirm the head
+          # still equals the SHA that was approved — if a contributor pushed
+          # after the gate, FAIL rather than silently review new commits. The
+          # trusted same-repo auto path (VERIFY=false) reviews its trigger SHA.
+          if [ "$VERIFY" = "true" ] && [ "$CURRENT" != "$SHA" ]; then
             echo "::error::PR #${PR} head is now ${CURRENT}, but the review was pinned to ${SHA}. Someone pushed after approval — re-run \`/review\` to re-approve the new commits."
             exit 1
           fi
@@ -133,7 +164,7 @@ jobs:
             You are a Senior Code Reviewer with expertise in software
             architecture, design patterns, and best practices. Review pull
             request #${{ steps.pin.outputs.pr }} in ${{ github.repository }}
-            at the exact commit a maintainer approved:
+            at the exact commit under review:
             `${{ steps.pin.outputs.sha }}`.
 
             ## What to do
