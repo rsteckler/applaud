@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
-import { findToken } from "../auth/chrome-leveldb.js";
+import { detectSession } from "../auth/detect.js";
 import { startBrowserWatch, subscribeWatch } from "../auth/browser-watch.js";
 import { plaudFetch, PlaudAuthError, resolveRegionFromDomain } from "../plaud/client.js";
+import { bootstrapFirstPartySession } from "../plaud/first-party.js";
 import { loadConfig, updateConfig } from "../config.js";
 import { logger } from "../logger.js";
 import type { AuthDetectResponse, AuthValidateResponse } from "@applaud/shared";
@@ -77,19 +78,30 @@ async function validateToken(token: string): Promise<AuthValidateResponse & { re
 
 authRouter.post("/detect", async (_req, res) => {
   try {
-    const found = await findToken();
+    const found = await detectSession();
     if (!found) {
       const r: AuthDetectResponse = { found: false };
       res.json(r);
       return;
     }
-    const r: AuthDetectResponse = {
-      found: true,
-      token: found.token,
-      profile: found.profile,
-      browser: found.browser,
-      email: found.email ?? undefined,
-    };
+    const r: AuthDetectResponse =
+      found.kind === "legacy"
+        ? {
+            found: true,
+            authMode: "legacy",
+            token: found.token,
+            profile: found.profile,
+            browser: found.browser,
+            email: found.email ?? undefined,
+          }
+        : {
+            found: true,
+            authMode: "first_party",
+            ut: found.ut,
+            urt: found.urt,
+            profile: found.profile,
+            browser: found.browser,
+          };
     res.json(r);
   } catch (err) {
     logger.error({ err }, "auth detect failed");
@@ -102,14 +114,57 @@ authRouter.post("/detect", async (_req, res) => {
 });
 
 const AcceptSchema = z.object({
-  token: z.string().min(10),
+  token: z.string().min(10).optional(),
   email: z.string().optional(),
+  ut: z.string().min(10).optional(),
+  urt: z.string().min(10).optional(),
 });
+
+const ValidateSchema = z.object({
+  token: z.string().min(10),
+});
+
+/**
+ * First-party accept: bootstrap a session from a captured `pld_ut`/`pld_urt`
+ * pair (list workspaces, mint a workspace token) and persist the full token
+ * set so the poller can keep it fresh.
+ */
+async function acceptFirstParty(
+  ut: string,
+  urt: string,
+  res: import("express").Response,
+): Promise<void> {
+  const result = await bootstrapFirstPartySession({ ut, urt });
+  if (!result.ok) {
+    res.status(400).json({ ok: false, error: result.error });
+    return;
+  }
+  updateConfig(result.patch);
+  res.json({ ok: true, email: result.email, exp: result.patch.tokenExp ?? undefined });
+}
 
 authRouter.post("/accept", async (req, res) => {
   const parsed = AcceptSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "invalid body" });
+    return;
+  }
+
+  // First-party path: a `pld_ut` / `pld_urt` cookie pair.
+  if (parsed.data.ut && parsed.data.urt) {
+    const ut = extractJwt(parsed.data.ut);
+    const urt = extractJwt(parsed.data.urt);
+    if (!ut || !urt) {
+      res.status(400).json({ ok: false, error: "pld_ut / pld_urt must be JWT values" });
+      return;
+    }
+    await acceptFirstParty(ut, urt, res);
+    return;
+  }
+
+  // Legacy path: a single bearer JWT lifted from `tokenstr`.
+  if (!parsed.data.token) {
+    res.status(400).json({ error: "no token provided" });
     return;
   }
   const jwt = extractJwt(parsed.data.token);
@@ -133,12 +188,18 @@ authRouter.post("/accept", async (req, res) => {
   // Prefer client-provided email (comes from LevelDB scan in the detect flow);
   // fall back to anything the JWT itself carries.
   const email = parsed.data.email ?? jwtEmail ?? null;
-  updateConfig({ token: jwt, tokenExp: exp, tokenEmail: email, plaudRegion: effectiveRegion });
+  updateConfig({
+    authMode: "legacy",
+    token: jwt,
+    tokenExp: exp,
+    tokenEmail: email,
+    plaudRegion: effectiveRegion,
+  });
   res.json({ ok: true, email, exp });
 });
 
 authRouter.post("/validate", async (req, res) => {
-  const parsed = AcceptSchema.safeParse(req.body);
+  const parsed = ValidateSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ ok: false, error: "invalid body" });
     return;
@@ -176,21 +237,42 @@ authRouter.get("/watch/:id/events", (req, res) => {
   send({ type: "subscribed" });
 
   const unsub = subscribeWatch(id, (e) => {
-    send(e);
-    if (e.type === "found") {
-      // Persist the found token immediately so the UI can advance.
-      // Note: the JWT region claim may not match the user's actual region
-      // (Plaud can migrate accounts). The first sync or validate call
-      // will auto-correct via the -302 redirect handler.
-      const t = e.token;
-      const { email, exp, region } = parseJwt(t.token);
-      updateConfig({
-        token: t.token,
-        tokenExp: exp,
-        tokenEmail: email ?? t.email,
-        plaudRegion: region,
-      });
+    if (e.type !== "found") {
+      send(e);
+      return;
     }
+    // Persist the found session, then advance the UI. First-party sessions
+    // need a bootstrap round-trip (list workspaces + mint), so this is async;
+    // surface a bootstrap failure as an error event rather than a false "found".
+    void (async () => {
+      const s = e.session;
+      try {
+        if (s.kind === "legacy") {
+          // Note: the JWT region claim may not match the user's actual region
+          // (Plaud can migrate accounts). The first sync/validate call will
+          // auto-correct via the -302 redirect handler.
+          const { email, exp, region } = parseJwt(s.token);
+          updateConfig({
+            authMode: "legacy",
+            token: s.token,
+            tokenExp: exp,
+            tokenEmail: email ?? s.email,
+            plaudRegion: region,
+          });
+          send({ type: "found", authMode: "legacy", profile: s.profile, browser: s.browser, email: email ?? s.email ?? undefined });
+          return;
+        }
+        const result = await bootstrapFirstPartySession({ ut: s.ut, urt: s.urt });
+        if (!result.ok) {
+          send({ type: "error", message: result.error });
+          return;
+        }
+        updateConfig(result.patch);
+        send({ type: "found", authMode: "first_party", profile: s.profile, browser: s.browser, email: result.email ?? undefined });
+      } catch (err) {
+        send({ type: "error", message: err instanceof Error ? err.message : String(err) });
+      }
+    })();
   });
 
   if (!unsub) {

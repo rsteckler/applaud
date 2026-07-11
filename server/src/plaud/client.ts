@@ -35,6 +35,39 @@ export function getPlaudApiBase(): string {
   return DEFAULT_API_BASE;
 }
 
+/**
+ * Resolve an explicit region key to its API base, independent of config.
+ * Used by the first-party session helpers, which thread a region through
+ * their own `-302` follow rather than reading the stored config.
+ */
+export function apiBaseForRegion(region: string | null): string {
+  if (region && REGION_API_BASES[region]) return REGION_API_BASES[region];
+  return DEFAULT_API_BASE;
+}
+
+/** A parsed Plaud `-302` region-mismatch redirect. */
+export type RegionRedirect =
+  | { ok: true; region: string; apiBase: string }
+  | { ok: false; apiBase: string | null };
+
+/**
+ * Detect Plaud's `{ status: -302, data: { domains: { api } } }` region
+ * redirect and resolve its target through the known-region allowlist.
+ * Returns `null` when `body` is not a `-302` envelope so callers fall
+ * through to normal handling.
+ */
+export function parseRegionRedirect(body: unknown): RegionRedirect | null {
+  if (typeof body !== "object" || body === null) return null;
+  const b = body as { status?: unknown; data?: unknown };
+  if (b.status !== -302) return null;
+  const data = b.data as { domains?: { api?: unknown } } | undefined;
+  const apiBase = typeof data?.domains?.api === "string" ? data.domains.api : null;
+  if (!apiBase) return { ok: false, apiBase: null };
+  const region = resolveRegionFromDomain(apiBase);
+  if (!region) return { ok: false, apiBase };
+  return { ok: true, region, apiBase };
+}
+
 export class PlaudAuthError extends Error {
   constructor(message: string) {
     super(message);

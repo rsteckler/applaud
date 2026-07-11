@@ -50,6 +50,15 @@ export const api = {
         body: JSON.stringify({ token, ...(email ? { email } : {}) }),
       },
     ),
+  /** First-party: submit a captured `pld_ut` / `pld_urt` cookie pair. */
+  authAcceptCookies: (ut: string, urt: string) =>
+    jsonFetch<{ ok: boolean; email?: string; exp?: number; error?: string }>(
+      "/api/auth/accept",
+      {
+        method: "POST",
+        body: JSON.stringify({ ut, urt }),
+      },
+    ),
   authValidate: (token: string) =>
     jsonFetch<AuthValidateResponse>("/api/auth/validate", {
       method: "POST",

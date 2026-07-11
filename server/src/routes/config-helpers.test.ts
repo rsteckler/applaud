@@ -14,6 +14,12 @@ const baseConfig: AppConfig = {
   pollIntervalMinutes: 10,
   bind: { host: "127.0.0.1", port: 44471 },
   lanToken: null,
+  authMode: null,
+  ut: null,
+  utExp: null,
+  urt: null,
+  urtExp: null,
+  plaudWorkspaceId: null,
   importPlaudDeleted: false,
 };
 
@@ -26,6 +32,15 @@ describe("redactConfig", () => {
   it("leaves a null token alone (no redaction sentinel for absence)", () => {
     const out = redactConfig({ ...baseConfig, token: null });
     expect(out.token).toBeNull();
+  });
+
+  it("redacts the first-party ut/urt secrets when set, leaves them null when absent", () => {
+    const withSecrets = redactConfig({ ...baseConfig, ut: "eyJ.ut", urt: "eyJ.urt" });
+    expect(withSecrets.ut).toBe(SECRET_REDACTED);
+    expect(withSecrets.urt).toBe(SECRET_REDACTED);
+    const without = redactConfig({ ...baseConfig, ut: null, urt: null });
+    expect(without.ut).toBeNull();
+    expect(without.urt).toBeNull();
   });
 
   it("redacts webhook.secret when set", () => {

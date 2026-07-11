@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import openUrl from "open";
-import { findToken, type FoundToken } from "./chrome-leveldb.js";
+import { detectSession, sessionKey, type DetectedSession } from "./detect.js";
 import { logger } from "../logger.js";
 
 export type WatchEvent =
   | { type: "waiting"; elapsedMs: number }
-  | { type: "found"; token: FoundToken }
+  | { type: "found"; session: DetectedSession }
   | { type: "timeout" }
   | { type: "error"; message: string };
 
@@ -31,11 +31,11 @@ export async function startBrowserWatch(openBrowser = true): Promise<string> {
   const id = randomUUID();
   const startedAt = Date.now();
 
-  // Snapshot any currently-valid tokens so we can ignore them and detect NEW logins.
+  // Snapshot any currently-valid session so we can ignore it and detect NEW logins.
   // This matters if the user already had a session but chose "log in again" or "different account."
-  const baseline = await findToken().catch(() => null);
+  const baseline = await detectSession().catch(() => null);
   const baselineTokens = new Set<string>();
-  if (baseline) baselineTokens.add(baseline.token);
+  if (baseline) baselineTokens.add(sessionKey(baseline));
 
   const listeners = new Set<Listener>();
   let done = false;
@@ -66,10 +66,10 @@ export async function startBrowserWatch(openBrowser = true): Promise<string> {
 
   const poll = async (): Promise<void> => {
     try {
-      const found = await findToken();
+      const found = await detectSession();
       if (!found) return;
-      if (baselineTokens.has(found.token)) return; // same token we started with
-      emit({ type: "found", token: found });
+      if (baselineTokens.has(sessionKey(found))) return; // same session we started with
+      emit({ type: "found", session: found });
       stop();
     } catch (err) {
       logger.warn({ err }, "browser-watch poll error");

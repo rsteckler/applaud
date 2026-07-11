@@ -41,6 +41,12 @@ const baseConfig: AppConfig = {
   pollIntervalMinutes: 10,
   bind: { host: "127.0.0.1", port: 44471 },
   lanToken: null,
+  authMode: null,
+  ut: null,
+  utExp: null,
+  urt: null,
+  urtExp: null,
+  plaudWorkspaceId: null,
   importPlaudDeleted: false,
 };
 

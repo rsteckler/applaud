@@ -5,12 +5,14 @@ export const SECRET_REDACTED = "***REDACTED***";
 /**
  * Returns a copy of the config with secret-class fields replaced by the
  * redaction sentinel. Used on the GET response so the browser never sees
- * the real `token` or `webhook.secret`.
+ * the real `token`, first-party `ut`/`urt`, or `webhook.secret`.
  */
 export function redactConfig(cfg: AppConfig): AppConfig {
   return {
     ...cfg,
     token: cfg.token ? SECRET_REDACTED : null,
+    ut: cfg.ut ? SECRET_REDACTED : null,
+    urt: cfg.urt ? SECRET_REDACTED : null,
     webhook: cfg.webhook
       ? { ...cfg.webhook, ...(cfg.webhook.secret ? { secret: SECRET_REDACTED } : {}) }
       : cfg.webhook,

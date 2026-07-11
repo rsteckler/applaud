@@ -11,6 +11,7 @@ import {
 } from "../plaud/transcript.js";
 import { getFileDetail } from "../plaud/detail.js";
 import { PlaudAuthError } from "../plaud/client.js";
+import { ensureFreshWorkspaceToken } from "../plaud/first-party.js";
 import {
   upsertFromPlaud,
   markAudioDownloaded,
@@ -105,16 +106,20 @@ class Poller {
       await this.pollAndProcess();
       this.lastError = null;
     } catch (err) {
-      if (err instanceof PlaudAuthError) {
-        this.authRequired = true;
-        this.lastError = err.message;
-        emit("auth_required", { message: err.message });
-        logger.warn({ err }, "poller paused: auth required");
-      } else {
-        this.lastError = err instanceof Error ? err.message : String(err);
-        emit("error", { message: this.lastError });
-        logger.error({ err }, "poll failed");
+      // First-party mid-poll 401: Plaud rejected an unexpired WT (revoked or
+      // rotated). Force one re-mint and retry the whole cycle before giving up.
+      if (err instanceof PlaudAuthError && loadConfig().authMode === "first_party") {
+        try {
+          await ensureFreshWorkspaceToken(true);
+          await this.pollAndProcess();
+          this.lastError = null;
+          return;
+        } catch (retryErr) {
+          this.handlePollError(retryErr);
+          return;
+        }
       }
+      this.handlePollError(err);
     } finally {
       this.lastPollAt = Date.now();
       this.inFlight = false;
@@ -126,9 +131,28 @@ class Poller {
     }
   }
 
+  private handlePollError(err: unknown): void {
+    if (err instanceof PlaudAuthError) {
+      this.authRequired = true;
+      this.lastError = err.message;
+      emit("auth_required", { message: err.message });
+      logger.warn({ err }, "poller paused: auth required");
+    } else {
+      this.lastError = err instanceof Error ? err.message : String(err);
+      emit("error", { message: this.lastError });
+      logger.error({ err }, "poll failed");
+    }
+  }
+
   private async pollAndProcess(): Promise<void> {
     const cfg = loadConfig();
     if (!cfg.token || !cfg.recordingsDir || !cfg.setupComplete) return;
+
+    // First-party sessions cache a short-lived workspace token; refresh/re-mint
+    // it before the poll if it's stale. No-op for legacy installs. May throw
+    // PlaudAuthError (reconnect required) or a transient Error, both handled by
+    // runOnce. Subsequent Plaud calls read the freshly-persisted token.
+    await ensureFreshWorkspaceToken();
 
     const isManualSync = this.pendingManualSync;
     if (isManualSync) this.pendingManualSync = false;
