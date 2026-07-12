@@ -139,8 +139,8 @@ export function AuthStep({
     <>
       <div className="mt-4 space-y-3">
         <ol className="text-xs text-on-surface-variant list-decimal list-inside space-y-1.5">
-          <li>Sign in at <code>web.plaud.ai</code>.</li>
-          <li>Open <code>api.plaud.ai/auth/refresh-user-token</code> in the same browser. You'll see an error page. That's expected; it refreshes your session.</li>
+          <li>Sign in at <a href="https://web.plaud.ai" target="_blank" rel="noopener noreferrer" className="text-primary underline hover:no-underline">web.plaud.ai</a>.</li>
+          <li>Open <a href="https://api.plaud.ai/auth/refresh-user-token" target="_blank" rel="noopener noreferrer" className="text-primary underline hover:no-underline">api.plaud.ai/auth/refresh-user-token</a> in the same browser. You'll see an error page. That's expected; it refreshes your session.</li>
           <li>Open your browser cookies for <code>api.plaud.ai</code>, then copy <code>pld_urt</code> into the first box and <code>pld_ut</code> into the second.</li>
         </ol>
         <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">pld_urt (refresh token)</label>
@@ -165,7 +165,7 @@ export function AuthStep({
       </div>
       <div className="mt-5 border-t border-outline-variant/30 pt-4 space-y-3">
         <p className="text-xs text-on-surface-variant">
-          Still have the old <code>tokenstr</code> value? Open DevTools → Application → Local Storage and paste it (starts with <code>bearer eyJ…</code>) or the raw JWT.
+          Don't see those cookies? You may be on Plaud's legacy platform. Open DevTools → Application → Local Storage and paste the old <code>tokenstr</code> value (starts with <code>bearer eyJ…</code>) or the raw JWT.
         </p>
         <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">tokenstr (legacy)</label>
         <textarea
