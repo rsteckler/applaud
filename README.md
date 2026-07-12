@@ -5,9 +5,9 @@ A self-hosted local server that mirrors your [Plaud](https://plaud.ai) recording
 > Applaud is not affiliated with Plaud. It talks to the same undocumented web API that the Plaud web app uses, via your own logged-in session.
 
 > [!NOTE]
-> <img src="assets/cordari-logo.png" align="right" width="80" alt="Cordari" />
+> <img src="assets/rovenotes-logo.png" align="right" width="80" alt="RoveNotes" />
 >
-> **Want more features without the complexity of self-hosting?** Check out the professionally managed version at **[cordari.ai](https://cordari.ai)**. It includes everything in Applaud plus additional destinations — Google Drive, Notion, Obsidian, reMarkable tablet, Google Calendar, Todoist, and email (in addition to webhooks / n8n) — and supports multiple AI summaries per recording.
+> **Want more features without the complexity of self-hosting?** Check out the professionally managed version at **[rovenotes.com](https://rovenotes.com)**. It includes everything in Applaud plus additional destinations — Google Drive, Notion, Obsidian, reMarkable tablet, Google Calendar, Todoist, and email (in addition to webhooks / n8n) — and supports multiple AI summaries per recording.
 
 ## Features
 
