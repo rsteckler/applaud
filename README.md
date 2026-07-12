@@ -30,12 +30,12 @@ First, you should never run commands you find on the internet that end in `| sh`
 
 **macOS / Linux / WSL:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rsteckler/applaud/v0.5.10/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/rsteckler/applaud/v0.5.11/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/rsteckler/applaud/v0.5.10/install.ps1 | iex
+irm https://raw.githubusercontent.com/rsteckler/applaud/v0.5.11/install.ps1 | iex
 ```
 
 The installer does everything needed to install Applaud into a subfolder named `./applaud`. To run it:
