@@ -15,6 +15,8 @@ type DetectState =
       urt?: string;
     }
   | { kind: "notfound" }
+  // Windows: auto-detection isn't supported, so we skip straight to manual paste.
+  | { kind: "unsupported" }
   | { kind: "error"; message: string };
 
 type WatchState =
@@ -47,7 +49,10 @@ export function AuthStep({
     api
       .authDetect()
       .then((r) => {
-        if (r.found && r.authMode === "first_party" && r.ut && r.urt) {
+        if (r.autoDetectSupported === false) {
+          // Windows: no on-disk detection — go straight to manual paste.
+          setDetect({ kind: "unsupported" });
+        } else if (r.found && r.authMode === "first_party" && r.ut && r.urt) {
           setDetect({ kind: "found", authMode: "first_party", browser: r.browser, profile: r.profile, ut: r.ut, urt: r.urt });
         } else if (r.found && r.token) {
           setDetect({ kind: "found", authMode: "legacy", email: r.email, browser: r.browser, profile: r.profile, token: r.token });
@@ -127,6 +132,56 @@ export function AuthStep({
     }
   };
 
+  // The manual-paste form body, reused by the "no session found" flow (tucked
+  // inside a <details>) and the Windows flow (shown directly, since auto-detect
+  // isn't available there).
+  const manualPasteBody = (): JSX.Element => (
+    <>
+      <div className="mt-4 space-y-3">
+        <p className="text-xs text-on-surface-variant">
+          Newer Plaud accounts no longer expose a long-lived token in Local Storage. On web.plaud.ai open DevTools → Application → Cookies → <code>https://web.plaud.ai</code> and paste the values of <code>pld_ut</code> and <code>pld_urt</code> (each starts with <code>eyJ…</code>).
+        </p>
+        <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">pld_ut</label>
+        <textarea
+          className="w-full bg-surface-container-highest/50 border-0 rounded-lg p-3 font-mono text-xs text-on-surface h-16 focus:ring-2 focus:ring-primary/40 focus:outline-none"
+          placeholder="eyJhbGciOiJIUzI1NiIs..."
+          value={manualUt}
+          onChange={(e) => setManualUt(e.target.value)}
+        />
+        <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">pld_urt</label>
+        <textarea
+          className="w-full bg-surface-container-highest/50 border-0 rounded-lg p-3 font-mono text-xs text-on-surface h-16 focus:ring-2 focus:ring-primary/40 focus:outline-none"
+          placeholder="eyJhbGciOiJIUzI1NiIs..."
+          value={manualUrt}
+          onChange={(e) => setManualUrt(e.target.value)}
+        />
+        <div className="flex items-center gap-2">
+          <button className="btn-primary" onClick={() => void submitManualCookies()} disabled={manual.kind === "validating" || manualUt.trim().length < 20 || manualUrt.trim().length < 20}>
+            {manual.kind === "validating" ? "Connecting…" : "Connect with cookies"}
+          </button>
+        </div>
+      </div>
+      <div className="mt-5 border-t border-outline-variant/30 pt-4 space-y-3">
+        <p className="text-xs text-on-surface-variant">
+          Still have the old <code>tokenstr</code> value? Open DevTools → Application → Local Storage and paste it (starts with <code>bearer eyJ…</code>) or the raw JWT.
+        </p>
+        <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">tokenstr (legacy)</label>
+        <textarea
+          className="w-full bg-surface-container-highest/50 border-0 rounded-lg p-4 font-mono text-xs text-on-surface h-24 focus:ring-2 focus:ring-primary/40 focus:outline-none"
+          placeholder="bearer eyJhbGciOiJIUzI1NiIs..."
+          value={manualText}
+          onChange={(e) => setManualText(e.target.value)}
+        />
+        <div className="flex items-center gap-2">
+          <button className="btn-secondary" onClick={() => void submitManual()} disabled={manual.kind === "validating" || manualText.length < 20}>
+            {manual.kind === "validating" ? "Validating…" : "Use this token"}
+          </button>
+        </div>
+      </div>
+      {manual.kind === "error" && <p className="mt-3 text-sm text-error">{manual.message}</p>}
+    </>
+  );
+
   return (
     <div className="space-y-8">
       <div className="space-y-2">
@@ -184,49 +239,18 @@ export function AuthStep({
             {watch.kind === "error" && <p className="text-sm text-error">{watch.message}</p>}
             <details className="rounded-xl bg-surface-container p-4 text-sm">
               <summary className="cursor-pointer font-medium text-on-surface">Paste cookies manually</summary>
-              <div className="mt-4 space-y-3">
-                <p className="text-xs text-on-surface-variant">
-                  Newer Plaud accounts no longer expose a long-lived token in Local Storage. On web.plaud.ai open DevTools → Application → Cookies → <code>https://web.plaud.ai</code> and paste the values of <code>pld_ut</code> and <code>pld_urt</code> (each starts with <code>eyJ…</code>).
-                </p>
-                <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">pld_ut</label>
-                <textarea
-                  className="w-full bg-surface-container-highest/50 border-0 rounded-lg p-3 font-mono text-xs text-on-surface h-16 focus:ring-2 focus:ring-primary/40 focus:outline-none"
-                  placeholder="eyJhbGciOiJIUzI1NiIs..."
-                  value={manualUt}
-                  onChange={(e) => setManualUt(e.target.value)}
-                />
-                <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">pld_urt</label>
-                <textarea
-                  className="w-full bg-surface-container-highest/50 border-0 rounded-lg p-3 font-mono text-xs text-on-surface h-16 focus:ring-2 focus:ring-primary/40 focus:outline-none"
-                  placeholder="eyJhbGciOiJIUzI1NiIs..."
-                  value={manualUrt}
-                  onChange={(e) => setManualUrt(e.target.value)}
-                />
-                <div className="flex items-center gap-2">
-                  <button className="btn-primary" onClick={() => void submitManualCookies()} disabled={manual.kind === "validating" || manualUt.trim().length < 20 || manualUrt.trim().length < 20}>
-                    {manual.kind === "validating" ? "Connecting…" : "Connect with cookies"}
-                  </button>
-                </div>
-              </div>
-              <div className="mt-5 border-t border-outline-variant/30 pt-4 space-y-3">
-                <p className="text-xs text-on-surface-variant">
-                  Still have the old <code>tokenstr</code> value? Open DevTools → Application → Local Storage and paste it (starts with <code>bearer eyJ…</code>) or the raw JWT.
-                </p>
-                <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">tokenstr (legacy)</label>
-                <textarea
-                  className="w-full bg-surface-container-highest/50 border-0 rounded-lg p-4 font-mono text-xs text-on-surface h-24 focus:ring-2 focus:ring-primary/40 focus:outline-none"
-                  placeholder="bearer eyJhbGciOiJIUzI1NiIs..."
-                  value={manualText}
-                  onChange={(e) => setManualText(e.target.value)}
-                />
-                <div className="flex items-center gap-2">
-                  <button className="btn-secondary" onClick={() => void submitManual()} disabled={manual.kind === "validating" || manualText.length < 20}>
-                    {manual.kind === "validating" ? "Validating…" : "Use this token"}
-                  </button>
-                </div>
-              </div>
-              {manual.kind === "error" && <p className="mt-3 text-sm text-error">{manual.message}</p>}
+              {manualPasteBody()}
             </details>
+          </div>
+        )}
+        {detect.kind === "unsupported" && (
+          <div className="space-y-4">
+            <p className="text-sm text-on-surface-variant">
+              Automatic session detection isn't available on Windows yet, so connect by pasting your Plaud session cookies below.
+            </p>
+            <div className="rounded-xl bg-surface-container p-4 text-sm">
+              {manualPasteBody()}
+            </div>
           </div>
         )}
         {detect.kind === "error" && (

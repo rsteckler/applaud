@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { detectSession } from "../auth/detect.js";
+import { detectSession, autoDetectSupported } from "../auth/detect.js";
 import { startBrowserWatch, subscribeWatch } from "../auth/browser-watch.js";
 import { plaudFetch, PlaudAuthError, resolveRegionFromDomain } from "../plaud/client.js";
 import { bootstrapFirstPartySession } from "../plaud/first-party.js";
@@ -77,6 +77,13 @@ async function validateToken(token: string): Promise<AuthValidateResponse & { re
 }
 
 authRouter.post("/detect", async (_req, res) => {
+  // On Windows we can't read the on-disk session (DPAPI / App-Bound encryption),
+  // so skip the scan entirely and tell the client to go straight to manual paste.
+  if (!autoDetectSupported()) {
+    const r: AuthDetectResponse = { found: false, autoDetectSupported: false };
+    res.json(r);
+    return;
+  }
   try {
     const found = await detectSession();
     if (!found) {

@@ -31,6 +31,17 @@ export function sessionKey(s: DetectedSession): string {
 }
 
 /**
+ * Whether we can read a Plaud session off this machine's browser profiles.
+ * Windows cookies are DPAPI / App-Bound encrypted and the legacy `tokenstr`
+ * is on its way out, so rather than ship a fragile Windows decrypt path we
+ * skip auto-detection there and route Windows users straight to manual paste.
+ * Takes an explicit platform for testability; defaults to the host platform.
+ */
+export function autoDetectSupported(plat: NodeJS.Platform = process.platform): boolean {
+  return plat !== "win32";
+}
+
+/**
  * Detect a Plaud session on this machine. Legacy `tokenstr` wins when present;
  * otherwise the first-party cookie pair. Returns `null` when neither is found.
  */
