@@ -138,22 +138,24 @@ export function AuthStep({
   const manualPasteBody = (): JSX.Element => (
     <>
       <div className="mt-4 space-y-3">
-        <p className="text-xs text-on-surface-variant">
-          Newer Plaud accounts no longer expose a long-lived token in Local Storage. On web.plaud.ai open DevTools → Application → Cookies → <code>https://web.plaud.ai</code> and paste the values of <code>pld_ut</code> and <code>pld_urt</code> (each starts with <code>eyJ…</code>).
-        </p>
-        <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">pld_ut</label>
-        <textarea
-          className="w-full bg-surface-container-highest/50 border-0 rounded-lg p-3 font-mono text-xs text-on-surface h-16 focus:ring-2 focus:ring-primary/40 focus:outline-none"
-          placeholder="eyJhbGciOiJIUzI1NiIs..."
-          value={manualUt}
-          onChange={(e) => setManualUt(e.target.value)}
-        />
-        <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">pld_urt</label>
+        <ol className="text-xs text-on-surface-variant list-decimal list-inside space-y-1.5">
+          <li>Sign in at <code>web.plaud.ai</code>.</li>
+          <li>Open <code>api.plaud.ai/auth/refresh-user-token</code> in the same browser. You'll see an error page. That's expected; it refreshes your session.</li>
+          <li>Open your browser cookies for <code>api.plaud.ai</code>, then copy <code>pld_urt</code> into the first box and <code>pld_ut</code> into the second.</li>
+        </ol>
+        <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">pld_urt (refresh token)</label>
         <textarea
           className="w-full bg-surface-container-highest/50 border-0 rounded-lg p-3 font-mono text-xs text-on-surface h-16 focus:ring-2 focus:ring-primary/40 focus:outline-none"
           placeholder="eyJhbGciOiJIUzI1NiIs..."
           value={manualUrt}
           onChange={(e) => setManualUrt(e.target.value)}
+        />
+        <label className="font-label text-xs text-on-surface-variant uppercase tracking-wider block">pld_ut (user token)</label>
+        <textarea
+          className="w-full bg-surface-container-highest/50 border-0 rounded-lg p-3 font-mono text-xs text-on-surface h-16 focus:ring-2 focus:ring-primary/40 focus:outline-none"
+          placeholder="eyJhbGciOiJIUzI1NiIs..."
+          value={manualUt}
+          onChange={(e) => setManualUt(e.target.value)}
         />
         <div className="flex items-center gap-2">
           <button className="btn-primary" onClick={() => void submitManualCookies()} disabled={manual.kind === "validating" || manualUt.trim().length < 20 || manualUrt.trim().length < 20}>
