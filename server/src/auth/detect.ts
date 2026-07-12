@@ -31,11 +31,13 @@ export function sessionKey(s: DetectedSession): string {
 }
 
 /**
- * Whether we can read a Plaud session off this machine's browser profiles.
- * Windows cookies are DPAPI / App-Bound encrypted and the legacy `tokenstr`
- * is on its way out, so rather than ship a fragile Windows decrypt path we
- * skip auto-detection there and route Windows users straight to manual paste.
- * Takes an explicit platform for testability; defaults to the host platform.
+ * Whether we attempt to auto-detect a Plaud session off this machine's browser
+ * profiles. Windows first-party cookies are DPAPI / App-Bound encrypted, so the
+ * first-party path can't work there. We *intentionally* skip the whole scan on
+ * Windows — including the legacy `tokenstr` LevelDB read, which technically
+ * still works — rather than ship an auto-detect that only ever succeeds for the
+ * shrinking set of legacy accounts. Windows users get a consistent manual-paste
+ * flow instead. Takes an explicit platform for testability; defaults to host.
  */
 export function autoDetectSupported(plat: NodeJS.Platform = process.platform): boolean {
   return plat !== "win32";

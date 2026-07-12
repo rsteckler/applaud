@@ -220,6 +220,13 @@ authRouter.post("/validate", async (req, res) => {
 });
 
 authRouter.post("/watch", async (_req, res) => {
+  // Server is the source of truth for OS support: the Windows UI never reaches
+  // the watch flow, but guard the endpoint too so a stale/rogue client can't
+  // kick off a scan that can never find a session on this platform.
+  if (!autoDetectSupported()) {
+    res.status(400).json({ error: "auto-detection is not supported on this platform" });
+    return;
+  }
   try {
     const id = await startBrowserWatch(true);
     res.json({ watchId: id });
