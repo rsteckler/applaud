@@ -37,6 +37,9 @@ import { emit } from "./events.js";
 import type { RecordingRow } from "@applaud/shared";
 import { sanitizePlaudSummaryMarkdown } from "@applaud/shared";
 
+/** Plaud body-level status for a rejected workspace token (sent with HTTP 200). */
+const PLAUD_STATUS_WT_EXPIRED = -419;
+
 export interface PollerStatus {
   lastPollAt: number | null;
   nextPollAt: number | null;
@@ -184,6 +187,15 @@ class Poller {
         isTrash: listTrashMode,
       });
       if (page.status !== 0) {
+        // -419 is Plaud's body-level "workspace token expired", served with HTTP
+        // 200, so plaudFetch's 401 branch never sees it. Surfacing it as
+        // PlaudAuthError lets runOnce() force a re-mint and retry. As a plain
+        // Error the poll instead fails every cycle for as long as the cached
+        // tokenExp stays outside the refresh skew, since Plaud can reject a WT
+        // well before the exp claim it was minted with.
+        if (page.status === PLAUD_STATUS_WT_EXPIRED) {
+          throw new PlaudAuthError(`Plaud list rejected the workspace token: status=${page.status} msg=${page.msg}`);
+        }
         throw new Error(`Plaud list returned status=${page.status} msg=${page.msg}`);
       }
       totalReported = page.data_file_total ?? totalReported;
