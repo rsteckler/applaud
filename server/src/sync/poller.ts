@@ -187,11 +187,12 @@ class Poller {
         isTrash: listTrashMode,
       });
       if (page.status !== 0) {
-        // -419 is Plaud's body-level "workspace token expired": the same condition
-        // as an HTTP 401, but delivered with HTTP 200, so plaudFetch's 401 branch
-        // never sees it. Surfacing it as PlaudAuthError lets runOnce() force a
-        // re-mint and retry; as a plain Error the poll fails every cycle until the
-        // cached WT finally hits its refresh skew, which can be ~24h away.
+        // -419 is Plaud's body-level "workspace token expired", served with HTTP
+        // 200, so plaudFetch's 401 branch never sees it. Surfacing it as
+        // PlaudAuthError lets runOnce() force a re-mint and retry. As a plain
+        // Error the poll instead fails every cycle for as long as the cached
+        // tokenExp stays outside the refresh skew, since Plaud can reject a WT
+        // well before the exp claim it was minted with.
         if (page.status === PLAUD_STATUS_WT_EXPIRED) {
           throw new PlaudAuthError(`Plaud list rejected the workspace token: status=${page.status} msg=${page.msg}`);
         }
