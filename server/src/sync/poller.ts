@@ -10,7 +10,7 @@ import {
   fetchTranscriptFromContentList,
 } from "../plaud/transcript.js";
 import { getFileDetail } from "../plaud/detail.js";
-import { PlaudAuthError } from "../plaud/client.js";
+import { PlaudAuthError, isPlaudAuthStatus } from "../plaud/client.js";
 import { ensureFreshWorkspaceToken } from "../plaud/first-party.js";
 import {
   upsertFromPlaud,
@@ -184,7 +184,12 @@ class Poller {
         isTrash: listTrashMode,
       });
       if (page.status !== 0) {
-        throw new Error(`Plaud list returned status=${page.status} msg=${page.msg}`);
+        const msg = `Plaud list returned status=${page.status} msg=${page.msg}`;
+        // Auth codes must surface as PlaudAuthError so the mid-poll forced
+        // re-mint above can recover; a plain Error stalls until the WT's own
+        // exp claim lapses, which can be ~24h after Plaud revoked it.
+        if (isPlaudAuthStatus(page.status)) throw new PlaudAuthError(msg);
+        throw new Error(msg);
       }
       totalReported = page.data_file_total ?? totalReported;
       const items = page.data_file_list ?? [];

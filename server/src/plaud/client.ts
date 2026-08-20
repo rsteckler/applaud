@@ -68,6 +68,15 @@ export function parseRegionRedirect(body: unknown): RegionRedirect | null {
   return { ok: true, region, apiBase };
 }
 
+// Plaud signals an invalid/rotated token in the JSON envelope with HTTP 200,
+// so the 401 branch in plaudFetch never sees it. -419 = workspace token expired.
+const AUTH_FAILURE_STATUSES = new Set([-419]);
+
+/** True when a Plaud envelope `status` means the token is no longer valid. */
+export function isPlaudAuthStatus(status: number): boolean {
+  return AUTH_FAILURE_STATUSES.has(status);
+}
+
 export class PlaudAuthError extends Error {
   constructor(message: string) {
     super(message);
